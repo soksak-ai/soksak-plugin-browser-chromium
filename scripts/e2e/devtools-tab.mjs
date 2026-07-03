@@ -114,7 +114,7 @@ async function main() {
 
   // 2) DevTools 탭(정식 탭 — 검사 대상 "옆 분할" 새 그룹으로 열림: 대상이 보여야 렌더되므로)
   const all1 = await allViews();
-  ok((await rpc(cmd("devtools"), {})).ok, "devtools 열기 명령");
+  ok((await rpc(cmd("devtools-tab"), {})).ok, "devtools 열기 명령");
   await sleep(2600);
   const v2 = await views();
   const dtViewId = v2.active;
@@ -161,7 +161,7 @@ async function main() {
   let leaked = [];
   for (let i = 1; i <= CYCLES; i++) {
     const before = await stats();
-    await rpc(cmd("devtools"), {});
+    await rpc(cmd("devtools-tab"), {});
     await sleep(2200);
     const v = await views();
     const created = diff(await stats(), before);
@@ -181,7 +181,7 @@ async function main() {
   //    이미 자기 그룹(옆 분할)으로 열리므로, 검사 대상 그룹으로 "병합"(zone=center = 탭 드롭)한다.
   //    이동은 unmount→remount 이므로 devtools 정체성(영속 마커)의 재마운트 복원까지 검증된다.
   const s4 = await stats();
-  await rpc(cmd("devtools"), { viewId: browserViewId });
+  await rpc(cmd("devtools-tab"), { viewId: browserViewId });
   await sleep(2400);
   const v5 = await views();
   const dtId2 = v5.active;
@@ -208,7 +208,7 @@ async function main() {
 
   // 6) 중복 방지 — 같은 브라우저의 devtools 재요청 = 기존 탭 활성화(새 탭/새 child 0)
   const s6 = await stats();
-  const dedup = await rpc(cmd("devtools"), { viewId: browserViewId });
+  const dedup = await rpc(cmd("devtools-tab"), { viewId: browserViewId });
   await sleep(600);
   ok(
     !!(dedup && dedup.ok && dedup.focused === true) && diff(await stats(), s6).length === 0,
@@ -228,7 +228,48 @@ async function main() {
   );
   myViews.delete(dtId2); // 동반 닫힘됨 — cleanup 중복 close 방지
 
-  // 8) 자가정리(테스트 소유 뷰만) + 테스트 child 전멸 확인
+  // 8) inline 모드(같은 탭 내부 분할) — devtools-inline: 뷰 +0 · child +1(#dt), 토글 오프 = 파킹
+  //    (child 보존 — 재토글 시 입양으로 DevTools 상태 유지), 뷰 닫기 = 둘 다 파괴(유령 0).
+  ok((await rpc(cmd("open"), { url: "https://example.com" })).ok, "browser open(inline 용)");
+  await sleep(2200);
+  const v8 = await views();
+  const b8 = v8.active;
+  myViews.add(b8);
+  const s8 = await stats();
+  const allBefore8 = (await allViews()).length;
+  ok((await rpc(cmd("devtools-inline"), { viewId: b8 })).ok, "devtools-inline 열기 명령");
+  await sleep(3500);
+  const st8 = await rpc(cmd("stats"), {});
+  const dtKey8 = `chromium-${b8}#dt`;
+  ok(
+    (await allViews()).length === allBefore8 && dtKey8 in (st8.idMap || {}),
+    `inline: 뷰 +0 · #dt child 생성 (${dtKey8}→${st8.idMap?.[dtKey8]})`,
+  );
+  const inlineChild = st8.idMap?.[dtKey8];
+  await rpc(cmd("devtools-inline"), { viewId: b8 }); // 토글 오프
+  await sleep(1500);
+  const st8b = await rpc(cmd("stats"), {});
+  ok(
+    (st8b.ids || []).includes(inlineChild),
+    "inline 토글 오프 = 파킹(child 보존 — 재토글 입양용)",
+  );
+  await rpc(cmd("devtools-inline"), { viewId: b8 }); // 재토글 = 입양
+  await sleep(1500);
+  const st8c = await rpc(cmd("stats"), {});
+  ok(
+    (st8c.ids || []).length === (st8b.ids || []).length,
+    "inline 재토글 = 기존 child 입양(재생성 0)",
+  );
+  await rpc("view.close", { view: b8 });
+  myViews.delete(b8);
+  await sleep(2500);
+  const st8d = await rpc(cmd("stats"), {});
+  ok(
+    !(st8d.ids || []).includes(inlineChild) && !((`chromium-${b8}`) in (st8d.idMap || {})),
+    "inline 뷰 닫기 = 페이지+DevTools child 전멸(유령 0)",
+  );
+
+  // 9) 자가정리(테스트 소유 뷰만) + 테스트 child 전멸 확인
   const mine = [browserChild[0], dtChild2[0]].filter((x) => x != null);
   await cleanup();
   const fin = await stats();

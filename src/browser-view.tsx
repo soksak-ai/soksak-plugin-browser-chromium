@@ -9,8 +9,22 @@
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type { PluginApi, PluginViewContext } from "./host";
 import { t } from "./i18n";
-import { makeChromium, devtoolsMarkOf } from "./chromium-adapter";
-import { registerLabel, unregisterLabel, setPendingUrl, takePendingUrl, openDevtoolsTab } from "./commands";
+import {
+  makeChromium,
+  devtoolsMarkOf,
+  inlineMarkOf,
+  setInlineMark,
+  clearInlineMark,
+} from "./chromium-adapter";
+import {
+  registerLabel,
+  unregisterLabel,
+  setPendingUrl,
+  takePendingUrl,
+  openDevtoolsTab,
+  registerInlineController,
+} from "./commands";
+import type { WebviewApi } from "./host";
 
 // ── IME 조합 중 Enter 무시 (코어 imeKeys.ts 이식) ────────────────────────────
 function isComposingEnter(
@@ -125,6 +139,60 @@ function BrowserViewImpl({
   const devtoolsTarget = devtoolsOf ?? (label ? devtoolsMarkOf(label) : null);
 
   const areaRef = useRef<HTMLDivElement>(null);
+  // inline DevTools(같은 탭 내부 분할) — 값 = 페이지 몫 비율(0..1), null = 닫힘. 재마운트는
+  // 어댑터 마커에서 복원(이동·reload 생존). 토글 오프는 child 를 파킹(어댑터 판정이 호스트 뷰
+  // 존재를 보고 보존) — 다시 켜면 입양으로 DevTools 상태가 그대로 살아난다.
+  const [inlineDt, setInlineDt] = useState<number | null>(() =>
+    label ? inlineMarkOf(label) : null,
+  );
+  const inlineScRef = useRef<boolean | undefined>(undefined);
+  const toggleInline = useCallback(
+    (screencast?: boolean) => {
+      if (!label) return;
+      setInlineDt((cur) => {
+        if (cur == null) {
+          inlineScRef.current = screencast;
+          const r = inlineMarkOf(label) ?? 0.55;
+          setInlineMark(label, r);
+          return r;
+        }
+        clearInlineMark(label);
+        return null;
+      });
+    },
+    [label],
+  );
+  useEffect(() => {
+    if (!ctx.viewId) return;
+    return registerInlineController(ctx.viewId, toggleInline);
+  }, [ctx.viewId, toggleInline]);
+  // 내부 divider 드래그 — 페이지/DevTools 비율 조절. divider 는 두 홀 사이 6px DOM 띠라
+  // 마우스를 직접 받는다(아래 레이어의 child 는 이 띠를 안 덮음).
+  const onDtDividerDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const area = areaRef.current;
+      const wrap = area?.parentElement;
+      if (!area || !wrap || !label) return;
+      const areaTop = area.getBoundingClientRect().top;
+      const wrapBottom = wrap.getBoundingClientRect().bottom;
+      const usable = Math.max(1, wrapBottom - areaTop - 6);
+      let last = inlineDt ?? 0.55;
+      const onMove = (ev: MouseEvent) => {
+        last = Math.min(0.85, Math.max(0.15, (ev.clientY - areaTop) / usable));
+        setInlineDt(last);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        setInlineMark(label, last);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [label, inlineDt],
+  );
+
   const openedRef = useRef(false);
   const lastRectRef = useRef("");
   // 라이브 리사이즈(가장자리 드래그) 진행 여부 — 코어 app.events("window.live-resize") 게이트.
@@ -493,9 +561,10 @@ function BrowserViewImpl({
           title={t("inspect", lang)}
           data-node="devtools"
           onClick={() => {
-            // DevTools 를 탭으로(이 브라우저를 검사 대상으로) — 이미 열려 있으면 그 탭 활성화(중복 방지).
-            // 분할·이동·닫기는 일반 탭과 동일(코어 view 커맨드 = 드래그와 같은 경로).
-            void openDevtoolsTab(app, label);
+            // devtoolsOpenMode 설정을 따른다: tab(기본) = 독립 탭(분할·이동·닫기 = 일반 탭과 동일),
+            // inline = 이 뷰 내부 분할 토글. 명령 devtools-tab / devtools-inline 은 설정 무관 강제.
+            if (app.settings?.get("devtoolsOpenMode") === "inline") toggleInline();
+            else void openDevtoolsTab(app, label);
           }}
         >
           <IconTerminal />
@@ -539,9 +608,151 @@ function BrowserViewImpl({
         </div>
       )}
       {/* child webview 가 이 영역 위에 정렬된다(레이어 원칙: DOM 아래 네이티브). */}
-      <div className="bv-area" ref={areaRef} />
+      <div
+        className="bv-area"
+        ref={areaRef}
+        style={inlineDt != null ? { flex: `${inlineDt} 1 0px` } : undefined}
+      />
+      {inlineDt != null && (
+        <>
+          <div className="bv-dt-divider" data-node="dt-divider" onMouseDown={onDtDividerDown} />
+          <InlineDevtools
+            app={app}
+            webview={webview}
+            hostLabel={label}
+            grow={1 - inlineDt}
+            screencast={inlineScRef.current}
+          />
+        </>
+      )}
     </div>
   );
+}
+
+// ── InlineDevtools — 같은 탭 내부 분할의 DevTools 홀 ─────────────────────────────
+// 호스트 뷰 안의 두 번째 홀(.bv-dt-area)에 DevTools child(label "#dt")를 정렬한다. 호스트의
+// bounds 추종과 동일 패턴(자가종료 rAF + ResizeObserver + IntersectionObserver)의 축약본.
+// 언마운트(토글 오프/뷰 닫힘/이동) 시 close — 어댑터 판정이 호스트 뷰 존재를 보고 파킹/파괴를
+// 가른다(토글 오프 = 파킹 → 재토글 시 입양으로 DevTools 상태 보존).
+function InlineDevtools({
+  app,
+  webview,
+  hostLabel,
+  grow,
+  screencast,
+}: {
+  app: PluginApi;
+  webview: WebviewApi;
+  hostLabel: string;
+  grow: number;
+  screencast?: boolean;
+}) {
+  const dtLabel = `${hostLabel}#dt`;
+  const ref = useRef<HTMLDivElement>(null);
+  const openedRef = useRef(false);
+  const lastRectRef = useRef("");
+  const visibleRef = useRef(true);
+
+  const sync = useCallback(
+    (force = false): "sent" | "same" => {
+      const el = ref.current;
+      if (!el || !openedRef.current || !visibleRef.current) return "same";
+      const r = el.getBoundingClientRect();
+      const x = Math.ceil(r.left);
+      const y = Math.ceil(r.top);
+      const w = Math.max(1, Math.floor(r.right) - x);
+      const h = Math.max(1, Math.floor(r.bottom) - y);
+      const key = `${x},${y},${w},${h}`;
+      if (!force && key === lastRectRef.current) return "same";
+      lastRectRef.current = key;
+      void webview.bounds(dtLabel, x, y, w, h);
+      return "sent";
+    },
+    [webview, dtLabel],
+  );
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let closed = false;
+    const r = el.getBoundingClientRect();
+    webview
+      .open(dtLabel, {
+        url: "",
+        x: r.left,
+        y: r.top,
+        w: Math.max(1, r.width),
+        h: Math.max(1, r.height),
+        devtoolsOf: hostLabel,
+        devtoolsScreencast: screencast,
+      })
+      .then(() => {
+        if (closed) {
+          void webview.close(dtLabel).catch(() => {});
+          return;
+        }
+        openedRef.current = true;
+        void webview.visible(dtLabel, true).catch(() => {});
+        sync(true);
+      })
+      .catch((e: unknown) => console.error("inline devtools open:", e));
+    return () => {
+      closed = true;
+      openedRef.current = false;
+      void webview.close(dtLabel).catch(() => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dtLabel]);
+
+  // bounds 추종(자가종료 rAF) + 가시성(탭 파킹) — 호스트 패턴의 축약본.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let rafId = 0;
+    let stable = 0;
+    const tick = () => {
+      rafId = 0;
+      stable = sync() === "same" ? stable + 1 : 0;
+      if (stable < 4) rafId = requestAnimationFrame(tick);
+    };
+    const arm = () => {
+      stable = 0;
+      if (!rafId) rafId = requestAnimationFrame(tick);
+    };
+    const ro = new ResizeObserver(arm);
+    ro.observe(el);
+    const onWinResize = () => arm();
+    window.addEventListener("resize", onWinResize);
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.buttons) arm();
+    };
+    document.addEventListener("pointermove", onPointerMove, true);
+    const io = new IntersectionObserver(
+      (entries) => {
+        const e = entries[entries.length - 1];
+        const visible = e.isIntersecting && e.intersectionRatio > 0;
+        if (visible === visibleRef.current) return;
+        visibleRef.current = visible;
+        void webview.visible(dtLabel, visible);
+        if (visible) {
+          lastRectRef.current = "";
+          sync(true);
+        }
+      },
+      { threshold: [0, 0.01] },
+    );
+    io.observe(el);
+    arm();
+    return () => {
+      ro.disconnect();
+      io.disconnect();
+      window.removeEventListener("resize", onWinResize);
+      document.removeEventListener("pointermove", onPointerMove, true);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [sync, webview, dtLabel, app]);
+
+  return <div className="bv-dt-area" ref={ref} style={{ flex: `${grow} 1 0px` }} />;
 }
 
 export const BrowserView = memo(BrowserViewImpl);

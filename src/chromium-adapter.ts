@@ -68,6 +68,40 @@ export function devtoolsLabelFor(inspectedLabel: string): string | null {
 export function devtoolsMapSnapshot(): Record<string, string> {
   return Object.fromEntries(devtoolsByLabel);
 }
+
+// ── inline DevTools(같은 탭 내부 분할) 마커 ─────────────────────────────────────
+// label(호스트 브라우저) → 분할 비율(페이지 몫 0..1). 존재 = inline DevTools 열림.
+// devtoolsByLabel 과 같은 sessionStorage 영속 — 드래그 이동(unmount→remount)·reload 생존.
+const INLINE_KEY = "soksak-plugin-browser-chromium:inline";
+function loadInline(): Map<string, number> {
+  try {
+    const raw = sessionStorage.getItem(INLINE_KEY);
+    if (!raw) return new Map();
+    return new Map(Object.entries(JSON.parse(raw) as Record<string, number>));
+  } catch {
+    return new Map();
+  }
+}
+const inlineByLabel = loadInline();
+function persistInline(): void {
+  try {
+    sessionStorage.setItem(INLINE_KEY, JSON.stringify(Object.fromEntries(inlineByLabel)));
+  } catch {
+    /* 저장 불가 환경 — 영속 없이 동작 */
+  }
+}
+/** inline DevTools 가 열려 있으면 분할 비율, 아니면 null. */
+export function inlineMarkOf(label: string): number | null {
+  return inlineByLabel.get(label) ?? null;
+}
+export function setInlineMark(label: string, ratio: number): void {
+  inlineByLabel.set(label, ratio);
+  persistInline();
+}
+export function clearInlineMark(label: string): void {
+  inlineByLabel.delete(label);
+  persistInline();
+}
 /** 진단: label → 엔진 child id 매핑 스냅샷. */
 export function idMapSnapshot(): Record<string, number> {
   return Object.fromEntries(idByLabel);
@@ -282,7 +316,8 @@ export function makeChromium(app: PluginApi): WebviewApi {
       // 디바운스+close_browser 왕복(수 초) 동안 화면에 잔존한다(실측 — DevTools 닫기 2~3s 유령).
       // 이동(unmount→remount)이면 뷰가 아직 목록에 있어 숨기지 않는다(이동 중 깜빡임 방지).
       {
-        const viewId = label.slice("chromium-".length);
+        // inline DevTools child(label "#dt" 접미)는 자기 뷰가 없다 — 호스트 뷰 존재로 판정.
+        const viewId = label.slice("chromium-".length).split("#")[0];
         void viewExistsAnywhere(app, viewId)
           .then((exists) => {
             if (!exists && pendingClose.has(label)) {
@@ -299,16 +334,28 @@ export function makeChromium(app: PluginApi): WebviewApi {
           pendingClose.delete(label);
           // 단발 판정(폴링 아님 — 파괴 결정 시점 1회): 뷰가 아직 워크스페이스 어딘가에 있으면
           // 이동/비활성 탭 파킹 — child 보존(숨김만, 활성화 시 open 이 표시 복원).
-          const viewId = label.slice("chromium-".length);
+          // inline DevTools child(label "#dt" 접미)는 자기 뷰가 없다 — 호스트 뷰 존재로 판정.
+          const viewId = label.slice("chromium-".length).split("#")[0];
           if (await viewExistsAnywhere(app, viewId)) {
             void send(app, { type: "hidden", id, hidden: true });
             return; // 매핑 유지 — 재마운트가 입양
           }
           idByLabel.delete(label);
           devtoolsByLabel.delete(label);
+          inlineByLabel.delete(label);
           persist();
           persistDevtools();
+          persistInline();
           void send(app, { type: "close", id });
+          // 파킹된 inline DevTools child 회수 — 토글 오프 상태로 호스트가 진짜 닫히면 소유
+          // 컴포넌트가 없어 아무도 못 닫는다(유령). inline 열림 상태면 그쪽 디바운스도 닫는데,
+          // 이미 닫힌 id 의 close 는 엔진이 조용히 건너뛴다(중복 무해).
+          const dtInline = idByLabel.get(`${label}#dt`);
+          if (dtInline != null) {
+            idByLabel.delete(`${label}#dt`);
+            persist();
+            void send(app, { type: "close", id: dtInline });
+          }
           // 검사 대상이 진짜 닫힘 — 그 DevTools 탭도 함께 닫는다(Chrome 동형). 대상 없는 DevTools 는
           // ws 가 끊겨 "Debugging connection was closed" 잔해가 되고 재접속도 불가(타깃 소멸).
           for (const [dtLabel, inspected] of devtoolsByLabel) {

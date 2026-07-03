@@ -78,6 +78,25 @@ export async function openDevtoolsTab(
   return { ok: true };
 }
 
+// inline DevTools(같은 탭 내부 분할) 토글 컨트롤러 — 마운트된 브라우저 뷰가 등록(viewId→toggle),
+// 커맨드(devtools-inline / devtools 디스패처)가 호출한다. 뷰가 언마운트면 등록 해제.
+const inlineControllers = new Map<string, (screencast?: boolean) => void>();
+export function registerInlineController(
+  viewId: string,
+  toggle: (screencast?: boolean) => void,
+): () => void {
+  inlineControllers.set(viewId, toggle);
+  return () => {
+    inlineControllers.delete(viewId);
+  };
+}
+export function toggleInlineDevtools(viewId: string, screencast?: boolean): boolean {
+  const t = inlineControllers.get(viewId);
+  if (!t) return false;
+  t(screencast);
+  return true;
+}
+
 // 활성 뷰의 label + 현재 URL 레지스트리(마운트=등록, 언마운트=제거).
 interface ViewEntry { label: string; getUrl: () => string }
 const activeViews = new Map<string, ViewEntry>();
@@ -104,6 +123,14 @@ function resolveEntry(explicitViewId?: string): ViewEntry | null {
   if (activeViewId && activeViews.has(activeViewId)) return activeViews.get(activeViewId)!;
   if (lastMountedViewId && activeViews.has(lastMountedViewId)) return activeViews.get(lastMountedViewId)!;
   const iter = activeViews.values().next();
+  return iter.done ? null : iter.value;
+}
+// 같은 우선순위로 viewId 를 해소(inline 컨트롤러 조회용).
+function resolveViewId(explicitViewId?: string): string | null {
+  if (explicitViewId) return activeViews.has(explicitViewId) ? explicitViewId : null;
+  if (activeViewId && activeViews.has(activeViewId)) return activeViewId;
+  if (lastMountedViewId && activeViews.has(lastMountedViewId)) return lastMountedViewId;
+  const iter = activeViews.keys().next();
   return iter.done ? null : iter.value;
 }
 
@@ -207,23 +234,58 @@ export function registerCommands(ctx: PluginContext): void {
     },
   });
 
-  reg("devtools", {
-    description: "Open Chrome DevTools for the active browser view as a new tab (splittable/movable like any view). Focuses the existing DevTools tab if one is already open for that view.",
-    triggers: { ko: "개발자 도구 인스펙터 devtools 열기" },
-    params: {
-      ...targetParam,
-      screencast: {
-        type: "boolean",
-        description: "Show the page preview (screencast) panel inside DevTools. Omit to follow the devtoolsScreencast plugin setting.",
-        required: false,
-      },
+  const screencastParam = {
+    screencast: {
+      type: "boolean" as const,
+      description: "Show the page preview (screencast) panel inside DevTools. Omit to follow the devtoolsScreencast plugin setting.",
+      required: false,
     },
+  };
+  const scOf = (p: Record<string, unknown>) =>
+    typeof p.screencast === "boolean" ? p.screencast : undefined;
+
+  reg("devtools", {
+    description: "Open Chrome DevTools for the active browser view. Follows the devtoolsOpenMode setting: 'tab' opens an independent tab (splittable/movable), 'inline' toggles a split inside the browser view. Use devtools-tab / devtools-inline to force a mode.",
+    triggers: { ko: "개발자 도구 인스펙터 devtools 열기" },
+    params: { ...targetParam, ...screencastParam },
+    handler: async (p) => {
+      const mode = app.settings?.get("devtoolsOpenMode") === "inline" ? "inline" : "tab";
+      if (mode === "inline") {
+        const viewId = resolveViewId(explicitTarget(p));
+        if (!viewId) return { ok: false, error: "no active browser view" };
+        return toggleInlineDevtools(viewId, scOf(p))
+          ? { ok: true, mode: "inline" }
+          : { ok: false, error: "browser view not mounted" };
+      }
+      const e = resolveEntry(explicitTarget(p));
+      if (!e) return { ok: false, error: "no active browser view" };
+      return openDevtoolsTab(app, e.label, scOf(p));
+    },
+  });
+
+  reg("devtools-tab", {
+    description: "Open Chrome DevTools as an independent tab (splittable/movable like any view), regardless of the devtoolsOpenMode setting. Focuses the existing DevTools tab if one is already open for that view.",
+    triggers: { ko: "개발자 도구 독립 탭 devtools tab" },
+    params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
       if (!e) return { ok: false, error: "no active browser view" };
       // DevTools 도 일반 브라우저 뷰다 — 새 뷰가 마운트되며 inspected(e.label)의 DevTools 프론트엔드를
       // 연다. 이후 분할/이동/닫기는 코어 view 커맨드(드래그와 동일 경로)로 동일하게 제어된다.
-      return openDevtoolsTab(app, e.label, typeof p.screencast === "boolean" ? p.screencast : undefined);
+      return openDevtoolsTab(app, e.label, scOf(p));
+    },
+  });
+
+  reg("devtools-inline", {
+    description: "Toggle Chrome DevTools as a split inside the browser view itself (page on top, DevTools below), regardless of the devtoolsOpenMode setting.",
+    triggers: { ko: "개발자 도구 내부 분할 인라인 devtools inline" },
+    params: { ...targetParam, ...screencastParam },
+    handler: async (p) => {
+      const viewId = resolveViewId(explicitTarget(p));
+      if (!viewId) return { ok: false, error: "no active browser view" };
+      return toggleInlineDevtools(viewId, scOf(p))
+        ? { ok: true, mode: "inline" }
+        : { ok: false, error: "browser view not mounted" };
     },
   });
 
