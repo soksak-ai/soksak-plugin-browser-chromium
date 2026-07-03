@@ -90,6 +90,10 @@ export interface WebviewApi {
   list: (prefix?: string) => Promise<string[]>;
   /** webview 종료 + 정리. */
   close: (label: string) => Promise<void>;
+  /** 창 합성 캡처를 rect(CSS px, 창 좌표)로 crop 한 PNG data URL. 가림 상태에서도 캡처.
+   *  드래그 중 표면의 시각 연속 스탠드인(freeze-frame — layout.resize-gesture 와 짝).
+   *  어댑터에서는 코어 webview 능력으로 위임(캡처는 창 합성이라 엔진 무관). */
+  captureRegion: (rect: { x: number; y: number; w: number; h: number }) => Promise<string>;
 }
 
 // app.sidecar — 엔진 사이드카(공유 네이티브 모듈) 채널. 코어는 맹목 relay(docs/SIDECARS.md).

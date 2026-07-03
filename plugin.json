@@ -18,7 +18,8 @@
     "programs",
     "data",
     "sidecar",
-    "commands:destructive"
+    "commands:destructive",
+    "webview"
   ],
   "sidecars": [
     {
@@ -255,6 +256,13 @@
         "description": {
           "ko": "개발자 도구 버튼",
           "en": "Developer tools button"
+        }
+      },
+      {
+        "id": "freeze",
+        "description": {
+          "ko": "디바이더 드래그 중 시각 연속 스탠드인(freeze-frame) 오버레이",
+          "en": "Visual-continuity stand-in (freeze-frame) overlay during divider drag"
         }
       }
     ]
