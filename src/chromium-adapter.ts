@@ -1,0 +1,267 @@
+// Chromium 엔진 어댑터 — browser-native 의 app.webview(OS 웹뷰 구동)와 동형 인터페이스를
+// 엔진 사이드카 채널(app.sidecar → soksak-sidecar-browser-chromium, 계약 soksak-sidecar-browser-spec)로
+// 구현한다. browser-view 의 슬롯추적·URL바·북마크 로직을 그대로 재사용하면서 엔진만 번들 Chromium
+// 으로 바꾼다. 코어 비결합: 코어는 이 메시지들의 의미를 모른다(맹목 relay — docs/SIDECARS.md).
+import type { Disposable, PluginApi, SidecarHandle, WebviewApi } from "./host";
+
+// label(전역 유일 문자열) → 엔진-로컬 browserId. browser-view 와 commands 가 공유(모듈 싱글턴).
+//
+// [고아 방지 — 창-스코프 영속] 이 매핑이 JS 메모리에만 있으면 window.reload(플러그인 JS 재기동)
+// 시 소실되고, 이전 인스턴스가 만든 native child 는 아무도 못 닫는 유령이 된다(실측 — 파일 탭 위에
+// 브라우저가 그대로 떠 있는 버그). sessionStorage 는 창별 + reload 생존이라 매핑의 정본으로 삼는다:
+// 재기동 시 복원 → 다시 마운트되는 뷰는 기존 child 를 "입양"(페이지 보존), ADOPT_GRACE_MS 안에
+// 입양되지 않은 child 는 회수(진짜 고아). 멀티창 안전 — 다른 창의 child 는 그 창의 저장소 소관.
+const STORE_KEY = "soksak-plugin-browser-chromium:children";
+const ADOPT_GRACE_MS = 5000;
+
+function loadPersisted(): Map<string, number> {
+  try {
+    const raw = sessionStorage.getItem(STORE_KEY);
+    if (!raw) return new Map();
+    return new Map(Object.entries(JSON.parse(raw) as Record<string, number>));
+  } catch {
+    return new Map();
+  }
+}
+function persist(): void {
+  try {
+    sessionStorage.setItem(STORE_KEY, JSON.stringify(Object.fromEntries(idByLabel)));
+  } catch {
+    /* 저장 불가 환경(테스트 등) — 영속 없이 동작 */
+  }
+}
+
+const idByLabel = loadPersisted();
+// 이전 JS 인스턴스에서 넘어온 미입양 label — open() 이 입양하면 제거, grace 후 잔여는 회수.
+const unclaimed = new Set<string>(idByLabel.keys());
+let sweepScheduled = idByLabel.size > 0;
+
+function scheduleOrphanSweep(app: PluginApi): void {
+  if (!sweepScheduled) return;
+  sweepScheduled = false;
+  setTimeout(() => {
+    for (const label of unclaimed) {
+      const id = idByLabel.get(label);
+      idByLabel.delete(label);
+      if (id != null) {
+        console.warn(`[browser-chromium] 미입양 child 회수: ${label} (id=${id})`);
+        void send(app, { type: "close", id });
+      }
+    }
+    unclaimed.clear();
+    persist();
+  }, ADOPT_GRACE_MS);
+}
+
+// close 디바운스 — 뷰 remount(unmount→즉시 mount)·split 이동 시 close 직후 open 이 오면 파괴를 취소하고
+// 기존 child 를 재사용해 페이지를 보존한다(안 그러면 매번 about:blank 로 재생성 = 흰 화면 churn).
+const pendingClose = new Map<string, ReturnType<typeof setTimeout>>();
+const CLOSE_DEBOUNCE_MS = 600;
+
+const noop: Disposable = { dispose() {} };
+
+// 사이드카 채널 lazy 싱글턴 — 최초 open 이 dlopen+검증+init(코어). 실패 시 다음 시도에 재개.
+let handleP: Promise<SidecarHandle> | null = null;
+function engine(app: PluginApi): Promise<SidecarHandle> {
+  if (!app.sidecar) return Promise.reject(new Error("sidecar 권한/선언 없음"));
+  if (!handleP) {
+    handleP = app.sidecar.open("browser-chromium").catch((e) => {
+      handleP = null; // 실패는 캐시하지 않는다(스테이징 후 재시도 가능)
+      throw e;
+    });
+  }
+  return handleP;
+}
+
+async function send(
+  app: PluginApi,
+  msg: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const h = await engine(app);
+    return await h.send(msg);
+  } catch (e) {
+    console.warn("[browser-chromium] send 실패:", e);
+    return null;
+  }
+}
+
+// browser-view 가 기대하는 WebviewApi 를 Chromium 엔진으로 만족시킨다. v1 미지원 표면(eval/devtools/
+// injectScript/nav·title 이벤트)은 안전한 no-op — 후속(DisplayHandler·CDP)에서.
+export function makeChromium(app: PluginApi): WebviewApi {
+  scheduleOrphanSweep(app); // 이전 JS 인스턴스 잔존 child — 입양 유예 후 회수(1회)
+  return {
+    label: (viewId: string) => `chromium-${viewId}`,
+
+    open: async (label, o) => {
+      // remount/split: 방금 close 예약된 label 이면 파괴 취소 + 기존 child 재사용(다시 표시, 페이지 보존).
+      const pc = pendingClose.get(label);
+      if (pc) {
+        clearTimeout(pc);
+        pendingClose.delete(label);
+        const rid = idByLabel.get(label);
+        if (rid != null) {
+          void send(app, { type: "hidden", id: rid, hidden: false });
+          return;
+        }
+      }
+      // window.reload 생존 child 입양 — 이전 인스턴스의 매핑(sessionStorage 복원)에 있으면
+      // 재생성 대신 재사용(페이지 보존). 표시 상태만 되살린다(bounds 는 슬롯 추적이 곧 동기화).
+      if (unclaimed.has(label)) {
+        unclaimed.delete(label);
+        const rid = idByLabel.get(label);
+        if (rid != null) {
+          void send(app, { type: "hidden", id: rid, hidden: false });
+          return;
+        }
+      }
+      {
+        // 이미 있음(보존된 child 의 재마운트) — 재생성 대신 표시만 복원(페이지 보존).
+        const rid = idByLabel.get(label);
+        if (rid != null) {
+          void send(app, { type: "hidden", id: rid, hidden: false });
+          return;
+        }
+      }
+      // DevTools 뷰 — URL 브라우저가 아니라 inspected(devtoolsOf) 브라우저의 DevTools 를 임베드 child 로
+      // 붙인다. 결과 id 는 일반 브라우저 id 와 동급이라 이 label 에 매핑만 하면 bounds/hidden/close·분할·
+      // 이동이 전부 아래 일반 경로로 동작한다. inspected 가 이미 닫혔으면(id 없음) 조용히 포기.
+      if (o.devtoolsOf) {
+        const inspectedId = idByLabel.get(o.devtoolsOf);
+        if (inspectedId == null) {
+          console.warn(`[browser-chromium] devtools 대상 미존재: ${o.devtoolsOf}`);
+          return;
+        }
+        const out = await send(app, {
+          type: "devtools-open",
+          inspectedId,
+          x: Math.round(o.x),
+          y: Math.round(o.y),
+          w: Math.max(1, Math.round(o.w)),
+          h: Math.max(1, Math.round(o.h)),
+        });
+        const id = out && typeof out.id === "number" ? out.id : null;
+        if (id != null) {
+          idByLabel.set(label, id);
+          persist();
+        }
+        return;
+      }
+      // 새 링크 열기 정책(browserNewWindow) 반영 — 엔진 on_before_popup 이 이 값으로 라우팅한다.
+      const asWindow = app.settings?.get("browserNewWindow") === "window";
+      void send(app, { type: "popup-mode", asWindow });
+      const out = await send(app, {
+        type: "create",
+        x: Math.round(o.x),
+        y: Math.round(o.y),
+        w: Math.max(1, Math.round(o.w)),
+        h: Math.max(1, Math.round(o.h)),
+        url: o.url,
+      });
+      const id = out && typeof out.id === "number" ? out.id : null;
+      if (id != null) {
+        idByLabel.set(label, id);
+        persist();
+      }
+    },
+
+    bounds: async (label, x, y, w, h) => {
+      const id = idByLabel.get(label);
+      if (id == null) return;
+      await send(app, {
+        type: "bounds",
+        id,
+        x: Math.round(x),
+        y: Math.round(y),
+        w: Math.max(1, Math.round(w)),
+        h: Math.max(1, Math.round(h)),
+      });
+    },
+
+    visible: async (label, visible) => {
+      const id = idByLabel.get(label);
+      if (id == null) return;
+      await send(app, { type: "hidden", id, hidden: !visible });
+    },
+
+    navigate: async (label, url) => {
+      const id = idByLabel.get(label);
+      if (id == null) return;
+      await send(app, { type: "load", id, url });
+    },
+
+    history: async (label, delta) => {
+      const id = idByLabel.get(label);
+      if (id == null) return;
+      await send(app, { type: delta < 0 ? "back" : "forward", id });
+    },
+
+    close: async (label) => {
+      const id = idByLabel.get(label);
+      if (id == null) return;
+      if (pendingClose.has(label)) return; // 이미 파괴 예약됨
+      // 파괴를 디바운스 — remount(unmount→즉시 mount)면 open 이 취소하고 기존 child 를 재사용해
+      // 페이지를 보존한다. 진짜 닫힘이면 CLOSE_DEBOUNCE_MS 후 실제 파괴. idByLabel 은 파괴 확정
+      // 시에만 지운다(재사용 위해 유지).
+      const t = setTimeout(() => {
+        void (async () => {
+          pendingClose.delete(label);
+          // 단발 판정(폴링 아님 — 파괴 결정 시점 1회): 뷰가 아직 워크스페이스에 있으면
+          // 이동/비활성 탭 파킹 — child 보존(숨김만, 활성화 시 open 이 표시 복원).
+          const viewId = label.slice("chromium-".length);
+          const out = await app.commands?.execute("view.list", {}).catch(() => null);
+          const views = (out && (out.views as { id: string }[] | undefined)) || null;
+          if (views && views.some((v) => v.id === viewId)) {
+            void send(app, { type: "hidden", id, hidden: true });
+            return; // 매핑 유지 — 재마운트가 입양
+          }
+          idByLabel.delete(label);
+          persist();
+          void send(app, { type: "close", id });
+        })();
+      }, CLOSE_DEBOUNCE_MS);
+      pendingClose.set(label, t);
+    },
+
+    // 이벤트 배선 — 엔진 채널 이벤트를 label 단위 콜백으로 demux.
+    //   nav/title = DisplayHandler(주소·제목 변화, id 필터 = 이 label 의 child 만) → URL 바·탭 제목.
+    //   open-external = 새 링크(target=_blank/window.open). "새 탭" 모드에선 엔진 on_before_popup 이
+    //   팝업을 취소하고 {event:"popup-url", url, id} 를 배달 → browser-view 의 openExternal(새 인앱
+    //   탭)로. id = 소스 브라우저(자기 소유만 소비 — 멀티창 중복 수신 방지; id 미상(null)은 단일
+    //   소비자 가정으로 수용). "새 창" 모드는 엔진이 네이티브 팝업으로 직접 처리.
+    on: (label, event, cb) => {
+      const engineEvent =
+        event === "open-external" ? "popup-url" : event === "nav" || event === "title" ? event : null;
+      if (!engineEvent) return noop;
+      let un: Disposable | null = null;
+      let disposed = false;
+      void engine(app)
+        .then((h) => {
+          const d = h.on(engineEvent, (p) => {
+            const src = typeof p.id === "number" ? (p.id as number) : null;
+            // 모든 이벤트는 "소스 id == 이 label 의 child" 정확 매칭으로만 소비한다. popup 도
+            // 동일 — 구독자(뷰)마다 콜백이 불리므로 느슨한 창-소유 필터는 뷰 수만큼 탭을
+            // 중복 생성한다(실측: 뷰 7개 → 새 탭 7개). 소스 뷰 하나만 연다.
+            if (src == null || idByLabel.get(label) !== src) return;
+            if (engineEvent === "popup-url") cb({ url: p.url });
+            else cb(engineEvent === "nav" ? { url: p.url } : { title: p.title });
+          });
+          if (disposed) d.dispose();
+          else un = d;
+        })
+        .catch(() => {});
+      return {
+        dispose() {
+          disposed = true;
+          un?.dispose();
+        },
+      };
+    },
+    // 나머지 v1 미지원 — 안전한 no-op. openWindow 는 "새 창" 모드를 엔진이 네이티브로 처리하므로 불요.
+    openWindow: async () => {},
+    eval: async () => "",
+    injectScript: () => noop,
+    list: async (prefix?: string) =>
+      [...idByLabel.keys()].filter((l) => !prefix || l.startsWith(prefix)),
+  };
+}
