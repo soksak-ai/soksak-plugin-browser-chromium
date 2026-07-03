@@ -89,6 +89,33 @@
         "ko": "DevTools 안에 검사 중인 페이지의 미리보기(screencast) 패널을 보여준다. 페이지가 옆 탭에 이미 보이므로 기본은 끔.",
         "en": "Show the inspected page's preview (screencast) panel inside DevTools. Off by default since the page is already visible in its own tab."
       }
+    },
+    {
+      "key": "devtoolsOpenMode",
+      "type": "enum",
+      "enum": [
+        "tab",
+        "inline"
+      ],
+      "enumLabels": [
+        {
+          "ko": "독립 탭",
+          "en": "Independent tab"
+        },
+        {
+          "ko": "같은 탭 내부 분할",
+          "en": "Split inside the tab"
+        }
+      ],
+      "default": "tab",
+      "title": {
+        "ko": "DevTools 열기 방식",
+        "en": "DevTools open mode"
+      },
+      "description": {
+        "ko": "개발자 도구 버튼/devtools 명령이 여는 방식. 독립 탭 = 분할/이동 가능한 정식 탭, 내부 분할 = 브라우저 뷰 안에서 위(페이지)/아래(DevTools)로 나뉨. devtools-tab / devtools-inline 명령은 설정과 무관하게 각 방식을 강제한다.",
+        "en": "How the devtools button / devtools command opens. Independent tab = a real splittable/movable tab; split inside = page on top, DevTools below within the browser view. The devtools-tab / devtools-inline commands force each mode regardless."
+      }
     }
   ],
   "contributes": {
@@ -177,6 +204,20 @@
         "title": {
           "ko": "엔진 child 진단",
           "en": "Engine child stats"
+        }
+      },
+      {
+        "name": "devtools-tab",
+        "title": {
+          "ko": "개발자 도구 독립 탭으로 열기",
+          "en": "Open devtools as independent tab"
+        }
+      },
+      {
+        "name": "devtools-inline",
+        "title": {
+          "ko": "개발자 도구 탭 내부 분할 토글",
+          "en": "Toggle devtools inside the tab"
         }
       }
     ],

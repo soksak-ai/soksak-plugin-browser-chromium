@@ -109,6 +109,22 @@ export const GLOBAL_CSS = `
   min-height: 0;
   background: transparent;
 }
+/* inline DevTools(같은 탭 내부 분할) — 페이지/DevTools 두 홀 사이의 리사이즈 divider.
+   6px DOM 띠는 어느 child rect 에도 안 덮여(두 홀 사이 갭) 마우스를 직접 받는다. */
+.bv-dt-divider {
+  flex: 0 0 6px;
+  cursor: row-resize;
+  background: var(--bd-soft, #2a2a2a);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.bv-dt-divider:hover {
+  background: var(--acc, #4a8cff);
+}
+.bv-dt-area {
+  min-height: 0;
+  background: transparent;
+}
 `;
 
 export function injectStyles(): void {

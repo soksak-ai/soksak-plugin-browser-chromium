@@ -12833,6 +12833,34 @@ function devtoolsLabelFor(inspectedLabel) {
 function devtoolsMapSnapshot() {
   return Object.fromEntries(devtoolsByLabel);
 }
+var INLINE_KEY = "soksak-plugin-browser-chromium:inline";
+function loadInline() {
+  try {
+    const raw = sessionStorage.getItem(INLINE_KEY);
+    if (!raw) return /* @__PURE__ */ new Map();
+    return new Map(Object.entries(JSON.parse(raw)));
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
+}
+var inlineByLabel = loadInline();
+function persistInline() {
+  try {
+    sessionStorage.setItem(INLINE_KEY, JSON.stringify(Object.fromEntries(inlineByLabel)));
+  } catch {
+  }
+}
+function inlineMarkOf(label) {
+  return inlineByLabel.get(label) ?? null;
+}
+function setInlineMark(label, ratio) {
+  inlineByLabel.set(label, ratio);
+  persistInline();
+}
+function clearInlineMark(label) {
+  inlineByLabel.delete(label);
+  persistInline();
+}
 function idMapSnapshot() {
   return Object.fromEntries(idByLabel);
 }
@@ -13001,7 +13029,7 @@ function makeChromium(app) {
       if (id == null) return;
       if (pendingClose.has(label)) return;
       {
-        const viewId = label.slice("chromium-".length);
+        const viewId = label.slice("chromium-".length).split("#")[0];
         void viewExistsAnywhere(app, viewId).then((exists) => {
           if (!exists && pendingClose.has(label)) {
             void send(app, { type: "hidden", id, hidden: true });
@@ -13012,16 +13040,24 @@ function makeChromium(app) {
       const t2 = setTimeout(() => {
         void (async () => {
           pendingClose.delete(label);
-          const viewId = label.slice("chromium-".length);
+          const viewId = label.slice("chromium-".length).split("#")[0];
           if (await viewExistsAnywhere(app, viewId)) {
             void send(app, { type: "hidden", id, hidden: true });
             return;
           }
           idByLabel.delete(label);
           devtoolsByLabel.delete(label);
+          inlineByLabel.delete(label);
           persist();
           persistDevtools();
+          persistInline();
           void send(app, { type: "close", id });
+          const dtInline = idByLabel.get(`${label}#dt`);
+          if (dtInline != null) {
+            idByLabel.delete(`${label}#dt`);
+            persist();
+            void send(app, { type: "close", id: dtInline });
+          }
           for (const [dtLabel, inspected] of devtoolsByLabel) {
             if (inspected === label) {
               const dtViewId = dtLabel.slice("chromium-".length);
@@ -13112,6 +13148,19 @@ async function openDevtoolsTab(app, inspectedLabel, screencast) {
   }
   return { ok: true };
 }
+var inlineControllers = /* @__PURE__ */ new Map();
+function registerInlineController(viewId, toggle) {
+  inlineControllers.set(viewId, toggle);
+  return () => {
+    inlineControllers.delete(viewId);
+  };
+}
+function toggleInlineDevtools(viewId, screencast) {
+  const t2 = inlineControllers.get(viewId);
+  if (!t2) return false;
+  t2(screencast);
+  return true;
+}
 var activeViews = /* @__PURE__ */ new Map();
 var lastMountedViewId = null;
 var activeViewId = null;
@@ -13133,6 +13182,13 @@ function resolveEntry(explicitViewId) {
   if (activeViewId && activeViews.has(activeViewId)) return activeViews.get(activeViewId);
   if (lastMountedViewId && activeViews.has(lastMountedViewId)) return activeViews.get(lastMountedViewId);
   const iter = activeViews.values().next();
+  return iter.done ? null : iter.value;
+}
+function resolveViewId(explicitViewId) {
+  if (explicitViewId) return activeViews.has(explicitViewId) ? explicitViewId : null;
+  if (activeViewId && activeViews.has(activeViewId)) return activeViewId;
+  if (lastMountedViewId && activeViews.has(lastMountedViewId)) return lastMountedViewId;
+  const iter = activeViews.keys().next();
   return iter.done ? null : iter.value;
 }
 function explicitTarget(p) {
@@ -13222,21 +13278,48 @@ function registerCommands(ctx) {
       return { ok: true };
     }
   });
+  const screencastParam = {
+    screencast: {
+      type: "boolean",
+      description: "Show the page preview (screencast) panel inside DevTools. Omit to follow the devtoolsScreencast plugin setting.",
+      required: false
+    }
+  };
+  const scOf = (p) => typeof p.screencast === "boolean" ? p.screencast : void 0;
   reg("devtools", {
-    description: "Open Chrome DevTools for the active browser view as a new tab (splittable/movable like any view). Focuses the existing DevTools tab if one is already open for that view.",
+    description: "Open Chrome DevTools for the active browser view. Follows the devtoolsOpenMode setting: 'tab' opens an independent tab (splittable/movable), 'inline' toggles a split inside the browser view. Use devtools-tab / devtools-inline to force a mode.",
     triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uC778\uC2A4\uD399\uD130 devtools \uC5F4\uAE30" },
-    params: {
-      ...targetParam,
-      screencast: {
-        type: "boolean",
-        description: "Show the page preview (screencast) panel inside DevTools. Omit to follow the devtoolsScreencast plugin setting.",
-        required: false
+    params: { ...targetParam, ...screencastParam },
+    handler: async (p) => {
+      const mode = app.settings?.get("devtoolsOpenMode") === "inline" ? "inline" : "tab";
+      if (mode === "inline") {
+        const viewId = resolveViewId(explicitTarget(p));
+        if (!viewId) return { ok: false, error: "no active browser view" };
+        return toggleInlineDevtools(viewId, scOf(p)) ? { ok: true, mode: "inline" } : { ok: false, error: "browser view not mounted" };
       }
-    },
+      const e = resolveEntry(explicitTarget(p));
+      if (!e) return { ok: false, error: "no active browser view" };
+      return openDevtoolsTab(app, e.label, scOf(p));
+    }
+  });
+  reg("devtools-tab", {
+    description: "Open Chrome DevTools as an independent tab (splittable/movable like any view), regardless of the devtoolsOpenMode setting. Focuses the existing DevTools tab if one is already open for that view.",
+    triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uB3C5\uB9BD \uD0ED devtools tab" },
+    params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
       if (!e) return { ok: false, error: "no active browser view" };
-      return openDevtoolsTab(app, e.label, typeof p.screencast === "boolean" ? p.screencast : void 0);
+      return openDevtoolsTab(app, e.label, scOf(p));
+    }
+  });
+  reg("devtools-inline", {
+    description: "Toggle Chrome DevTools as a split inside the browser view itself (page on top, DevTools below), regardless of the devtoolsOpenMode setting.",
+    triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uB0B4\uBD80 \uBD84\uD560 \uC778\uB77C\uC778 devtools inline" },
+    params: { ...targetParam, ...screencastParam },
+    handler: async (p) => {
+      const viewId = resolveViewId(explicitTarget(p));
+      if (!viewId) return { ok: false, error: "no active browser view" };
+      return toggleInlineDevtools(viewId, scOf(p)) ? { ok: true, mode: "inline" } : { ok: false, error: "browser view not mounted" };
     }
   });
   reg("open", {
@@ -13312,6 +13395,54 @@ function BrowserViewImpl({
   const label = ctx.viewId && webview ? webview.label(ctx.viewId) : null;
   const devtoolsTarget = devtoolsOf ?? (label ? devtoolsMarkOf(label) : null);
   const areaRef = (0, import_react.useRef)(null);
+  const [inlineDt, setInlineDt] = (0, import_react.useState)(
+    () => label ? inlineMarkOf(label) : null
+  );
+  const inlineScRef = (0, import_react.useRef)(void 0);
+  const toggleInline = (0, import_react.useCallback)(
+    (screencast) => {
+      if (!label) return;
+      setInlineDt((cur) => {
+        if (cur == null) {
+          inlineScRef.current = screencast;
+          const r = inlineMarkOf(label) ?? 0.55;
+          setInlineMark(label, r);
+          return r;
+        }
+        clearInlineMark(label);
+        return null;
+      });
+    },
+    [label]
+  );
+  (0, import_react.useEffect)(() => {
+    if (!ctx.viewId) return;
+    return registerInlineController(ctx.viewId, toggleInline);
+  }, [ctx.viewId, toggleInline]);
+  const onDtDividerDown = (0, import_react.useCallback)(
+    (e) => {
+      e.preventDefault();
+      const area = areaRef.current;
+      const wrap = area?.parentElement;
+      if (!area || !wrap || !label) return;
+      const areaTop = area.getBoundingClientRect().top;
+      const wrapBottom = wrap.getBoundingClientRect().bottom;
+      const usable = Math.max(1, wrapBottom - areaTop - 6);
+      let last = inlineDt ?? 0.55;
+      const onMove = (ev) => {
+        last = Math.min(0.85, Math.max(0.15, (ev.clientY - areaTop) / usable));
+        setInlineDt(last);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        setInlineMark(label, last);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [label, inlineDt]
+  );
   const openedRef = (0, import_react.useRef)(false);
   const lastRectRef = (0, import_react.useRef)("");
   const liveRef = (0, import_react.useRef)(false);
@@ -13611,7 +13742,8 @@ function BrowserViewImpl({
           title: t("inspect", lang),
           "data-node": "devtools",
           onClick: () => {
-            void openDevtoolsTab(app, label);
+            if (app.settings?.get("devtoolsOpenMode") === "inline") toggleInline();
+            else void openDevtoolsTab(app, label);
           },
           children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconTerminal, {})
         }
@@ -13656,8 +13788,136 @@ function BrowserViewImpl({
         b.url
       ))
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-area", ref: areaRef })
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "div",
+      {
+        className: "bv-area",
+        ref: areaRef,
+        style: inlineDt != null ? { flex: `${inlineDt} 1 0px` } : void 0
+      }
+    ),
+    inlineDt != null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-dt-divider", "data-node": "dt-divider", onMouseDown: onDtDividerDown }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        InlineDevtools,
+        {
+          app,
+          webview,
+          hostLabel: label,
+          grow: 1 - inlineDt,
+          screencast: inlineScRef.current
+        }
+      )
+    ] })
   ] });
+}
+function InlineDevtools({
+  app,
+  webview,
+  hostLabel,
+  grow,
+  screencast
+}) {
+  const dtLabel = `${hostLabel}#dt`;
+  const ref = (0, import_react.useRef)(null);
+  const openedRef = (0, import_react.useRef)(false);
+  const lastRectRef = (0, import_react.useRef)("");
+  const visibleRef = (0, import_react.useRef)(true);
+  const sync = (0, import_react.useCallback)(
+    (force = false) => {
+      const el = ref.current;
+      if (!el || !openedRef.current || !visibleRef.current) return "same";
+      const r = el.getBoundingClientRect();
+      const x = Math.ceil(r.left);
+      const y = Math.ceil(r.top);
+      const w = Math.max(1, Math.floor(r.right) - x);
+      const h = Math.max(1, Math.floor(r.bottom) - y);
+      const key = `${x},${y},${w},${h}`;
+      if (!force && key === lastRectRef.current) return "same";
+      lastRectRef.current = key;
+      void webview.bounds(dtLabel, x, y, w, h);
+      return "sent";
+    },
+    [webview, dtLabel]
+  );
+  (0, import_react.useEffect)(() => {
+    const el = ref.current;
+    if (!el) return;
+    let closed = false;
+    const r = el.getBoundingClientRect();
+    webview.open(dtLabel, {
+      url: "",
+      x: r.left,
+      y: r.top,
+      w: Math.max(1, r.width),
+      h: Math.max(1, r.height),
+      devtoolsOf: hostLabel,
+      devtoolsScreencast: screencast
+    }).then(() => {
+      if (closed) {
+        void webview.close(dtLabel).catch(() => {
+        });
+        return;
+      }
+      openedRef.current = true;
+      void webview.visible(dtLabel, true).catch(() => {
+      });
+      sync(true);
+    }).catch((e) => console.error("inline devtools open:", e));
+    return () => {
+      closed = true;
+      openedRef.current = false;
+      void webview.close(dtLabel).catch(() => {
+      });
+    };
+  }, [dtLabel]);
+  (0, import_react.useEffect)(() => {
+    const el = ref.current;
+    if (!el) return;
+    let rafId = 0;
+    let stable = 0;
+    const tick = () => {
+      rafId = 0;
+      stable = sync() === "same" ? stable + 1 : 0;
+      if (stable < 4) rafId = requestAnimationFrame(tick);
+    };
+    const arm = () => {
+      stable = 0;
+      if (!rafId) rafId = requestAnimationFrame(tick);
+    };
+    const ro = new ResizeObserver(arm);
+    ro.observe(el);
+    const onWinResize = () => arm();
+    window.addEventListener("resize", onWinResize);
+    const onPointerMove = (e) => {
+      if (e.buttons) arm();
+    };
+    document.addEventListener("pointermove", onPointerMove, true);
+    const io = new IntersectionObserver(
+      (entries) => {
+        const e = entries[entries.length - 1];
+        const visible = e.isIntersecting && e.intersectionRatio > 0;
+        if (visible === visibleRef.current) return;
+        visibleRef.current = visible;
+        void webview.visible(dtLabel, visible);
+        if (visible) {
+          lastRectRef.current = "";
+          sync(true);
+        }
+      },
+      { threshold: [0, 0.01] }
+    );
+    io.observe(el);
+    arm();
+    return () => {
+      ro.disconnect();
+      io.disconnect();
+      window.removeEventListener("resize", onWinResize);
+      document.removeEventListener("pointermove", onPointerMove, true);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [sync, webview, dtLabel, app]);
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-dt-area", ref, style: { flex: `${grow} 1 0px` } });
 }
 var BrowserView = (0, import_react.memo)(BrowserViewImpl);
 
@@ -13767,6 +14027,22 @@ var GLOBAL_CSS = `
 /* \uD640: \uC774 \uC601\uC5ED\uB9CC \uD22C\uBA85\uD574 "\uC544\uB798" child webview \uAC00 \uBE44\uCE5C\uB2E4(\uB808\uC774\uC5B4 \uC6D0\uCE59). */
 .bv-area {
   flex: 1 1 auto;
+  min-height: 0;
+  background: transparent;
+}
+/* inline DevTools(\uAC19\uC740 \uD0ED \uB0B4\uBD80 \uBD84\uD560) \u2014 \uD398\uC774\uC9C0/DevTools \uB450 \uD640 \uC0AC\uC774\uC758 \uB9AC\uC0AC\uC774\uC988 divider.
+   6px DOM \uB760\uB294 \uC5B4\uB290 child rect \uC5D0\uB3C4 \uC548 \uB36E\uC5EC(\uB450 \uD640 \uC0AC\uC774 \uAC2D) \uB9C8\uC6B0\uC2A4\uB97C \uC9C1\uC811 \uBC1B\uB294\uB2E4. */
+.bv-dt-divider {
+  flex: 0 0 6px;
+  cursor: row-resize;
+  background: var(--bd-soft, #2a2a2a);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.bv-dt-divider:hover {
+  background: var(--acc, #4a8cff);
+}
+.bv-dt-area {
   min-height: 0;
   background: transparent;
 }
