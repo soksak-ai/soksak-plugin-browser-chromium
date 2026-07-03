@@ -12978,6 +12978,16 @@ function makeChromium(app) {
       const id = idByLabel.get(label);
       if (id == null) return;
       if (pendingClose.has(label)) return;
+      {
+        const viewId = label.slice("chromium-".length);
+        void app.commands?.execute("view.list", {}).then((out) => {
+          const views = out && out.views || null;
+          if (views && !views.some((v) => v.id === viewId) && pendingClose.has(label)) {
+            void send(app, { type: "hidden", id, hidden: true });
+          }
+        }).catch(() => {
+        });
+      }
       const t2 = setTimeout(() => {
         void (async () => {
           pendingClose.delete(label);

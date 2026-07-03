@@ -243,6 +243,22 @@ export function makeChromium(app: PluginApi): WebviewApi {
       const id = idByLabel.get(label);
       if (id == null) return;
       if (pendingClose.has(label)) return; // 이미 파괴 예약됨
+      // 즉시 숨김 판정(단발): 뷰가 워크스페이스에서 이미 사라졌으면 진짜 닫힘 — 서피스를 지금 숨긴다.
+      // 파괴 확정은 아래 디바운스 그대로(입양 보호). 안 숨기면 탭은 닫혔는데 native child 가
+      // 디바운스+close_browser 왕복(수 초) 동안 화면에 잔존한다(실측 — DevTools 닫기 2~3s 유령).
+      // 이동(unmount→remount)이면 뷰가 아직 목록에 있어 숨기지 않는다(이동 중 깜빡임 방지).
+      {
+        const viewId = label.slice("chromium-".length);
+        void app.commands
+          ?.execute("view.list", {})
+          .then((out) => {
+            const views = (out && (out.views as { id: string }[] | undefined)) || null;
+            if (views && !views.some((v) => v.id === viewId) && pendingClose.has(label)) {
+              void send(app, { type: "hidden", id, hidden: true });
+            }
+          })
+          .catch(() => {});
+      }
       // 파괴를 디바운스 — remount(unmount→즉시 mount)면 open 이 취소하고 기존 child 를 재사용해
       // 페이지를 보존한다. 진짜 닫힘이면 CLOSE_DEBOUNCE_MS 후 실제 파괴. idByLabel 은 파괴 확정
       // 시에만 지운다(재사용 위해 유지).
