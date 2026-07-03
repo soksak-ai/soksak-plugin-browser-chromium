@@ -62,6 +62,17 @@ async function views() {
   const r = await rpc("view.list", {});
   return { list: (r && r.views) || [], active: r && r.activeViewId, groupId: r && r.groupId };
 }
+// 전 그룹 합산 뷰 목록 — devtools 는 검사 대상 "옆 분할"(새 그룹)로 열리므로, 활성 그룹만 세면
+// 열기 전후 비교가 어긋난다. 카운트/탐색은 전 그룹 합산이 정본.
+async function allViews() {
+  const pl = await rpc("panel.list", {});
+  const out = [];
+  for (const g of ((pl && pl.panels) || []).map((p) => p.id)) {
+    const r = await rpc("view.list", { group: g }).catch(() => null);
+    for (const v of (r && r.views) || []) out.push({ ...v, group: g });
+  }
+  return out;
+}
 // 엔진 child id 집합 — child 생멸의 단일 진실.
 async function stats() {
   const r = await rpc(cmd("stats")).catch(() => null);
@@ -101,7 +112,8 @@ async function main() {
   ok(browserChild.length === 1, `엔진 child 신규 1(브라우저: ${browserChild.join(",")})`);
   ok(await snap("dt-1-browser.png"), "snapshot(브라우저)");
 
-  // 2) DevTools 탭(정식 탭 — 탭바에 자기 탭)
+  // 2) DevTools 탭(정식 탭 — 검사 대상 "옆 분할" 새 그룹으로 열림: 대상이 보여야 렌더되므로)
+  const all1 = await allViews();
   ok((await rpc(cmd("devtools"), {})).ok, "devtools 열기 명령");
   await sleep(2600);
   const v2 = await views();
@@ -109,7 +121,14 @@ async function main() {
   myViews.add(dtViewId);
   const s2 = await stats();
   const dtChild = diff(s2, s1);
-  ok(v2.list.length === v1.list.length + 1, `DevTools 탭 +1 (${v1.list.length}→${v2.list.length})`);
+  const all2 = await allViews();
+  ok(all2.length === all1.length + 1, `DevTools 뷰 +1 (전그룹 ${all1.length}→${all2.length})`);
+  const dtEntry = all2.find((v) => v.id === dtViewId);
+  const bEntry = all2.find((v) => v.id === browserViewId);
+  ok(
+    !!(dtEntry && bEntry && dtEntry.group !== bEntry.group),
+    `devtools 는 검사 대상 옆 분할(새 그룹)로 열림 (browser=${bEntry?.group}, devtools=${dtEntry?.group})`,
+  );
   ok(dtChild.length === 1, `엔진 child 신규 1(devtools: ${dtChild.join(",")})`);
   ok(await snap("dt-2-devtools.png"), "snapshot(devtools 탭)");
   ok(await alive(), "★ devtools 열기 후 생존");
@@ -121,8 +140,8 @@ async function main() {
     "navigate 명령(devtools 열린 상태)",
   );
   await sleep(3200);
-  const vNav = await views();
-  const bTitle = (vNav.list.find((v) => v.id === browserViewId) || {}).title || "";
+  // 브라우저 뷰는 devtools 분할로 비활성 그룹에 있다 — 전그룹 탐색으로 제목 조회.
+  const bTitle = ((await allViews()).find((v) => v.id === browserViewId) || {}).title || "";
   ok(
     /위키|wikipedia/i.test(bTitle),
     `주소 이동 반영(탭 제목="${bTitle}")`,
@@ -134,7 +153,7 @@ async function main() {
   myViews.delete(dtViewId);
   await sleep(2000);
   ok(await alive(), "★★ devtools 닫기 후 생존");
-  ok((await views()).list.length === v1.list.length, "닫힌 뒤 뷰수 복귀");
+  ok((await allViews()).length === all1.length, "닫힌 뒤 뷰수 복귀(전그룹)");
   ok(!(await stats()).includes(dtChild[0]), "★★ 그 엔진 child 실제 파괴(유령 0)");
 
   // 4) 열고/닫기 반복 — 생존 + 각 child 소멸
@@ -158,9 +177,9 @@ async function main() {
   ok(survived, `★★★ devtools 열기/닫기 ${CYCLES}회 반복 생존`);
   ok(leaked.length === 0, `★★★ ${CYCLES}회 반복 child 누수 0`);
 
-  // 5) 드래그 분할 — view.move 는 탭 드래그-드롭과 동일 store 경로(moveViewToGroup). zone=right 로
-  //    새 패널 생성 = 가장자리 드롭. 이동은 unmount→remount 이므로 devtools 정체성(영속 마커)의
-  //    재마운트 복원까지 이 한 동작이 검증한다.
+  // 5) 드래그 이동 — view.move 는 탭 드래그-드롭과 동일 store 경로(moveViewToGroup). devtools 는
+  //    이미 자기 그룹(옆 분할)으로 열리므로, 검사 대상 그룹으로 "병합"(zone=center = 탭 드롭)한다.
+  //    이동은 unmount→remount 이므로 devtools 정체성(영속 마커)의 재마운트 복원까지 검증된다.
   const s4 = await stats();
   await rpc(cmd("devtools"), { viewId: browserViewId });
   await sleep(2400);
@@ -168,17 +187,18 @@ async function main() {
   const dtId2 = v5.active;
   myViews.add(dtId2);
   const dtChild2 = diff(await stats(), s4);
-  const moved = await rpc("view.move", { view: dtId2, dst: v5.groupId, zone: "right" });
+  const bGroup = ((await allViews()).find((v) => v.id === browserViewId) || {}).group;
+  const moved = await rpc("view.move", { view: dtId2, dst: bGroup, zone: "center" });
   ok(
     !!(moved && moved.ok !== false && moved.groupId),
-    `드래그 분할(view.move zone=right) → ${JSON.stringify({ ok: moved?.ok, groupId: moved?.groupId })}`,
+    `드래그 이동(view.move → 대상 그룹 병합) → ${JSON.stringify({ ok: moved?.ok, groupId: moved?.groupId })}`,
   );
   await sleep(1800);
-  ok(await alive(), "★ 분할 이동 후 생존");
+  ok(await alive(), "★ 드래그 이동 후 생존");
   const inNew = await rpc("view.list", { group: moved.groupId }).catch(() => null);
   ok(
     !!(inNew && (inNew.views || []).some((v) => v.id === dtId2)),
-    "이동 후 devtools 뷰가 새 패널에 존재(재마운트 완료)",
+    "이동 후 devtools 뷰가 대상 그룹에 존재(재마운트 완료)",
   );
   ok(
     dtChild2.length === 1 && (await stats()).includes(dtChild2[0]),
