@@ -1,0 +1,200 @@
+{
+  "spec": "soksak-plugin-spec@1",
+  "id": "soksak-plugin-browser-chromium",
+  "name": {
+    "ko": "브라우저 (Chromium)",
+    "en": "Browser (Chromium)"
+  },
+  "version": "0.1.0",
+  "repo": "https://github.com/soksak-ai/soksak-plugin-browser-chromium.git",
+  "description": {
+    "ko": "콘텐츠 뷰로 브라우저를 렌더 — 번들 Chromium 엔진 사이드카를 앱 프로세스에 로드해 네이티브 child 로 구동(app.sidecar 채널). 네이티브 Chromium 속도, URL 바·북마크 내장. OS 웹뷰가 아니라 어디서나 동일한 번들 Chromium 엔진.",
+    "en": "Renders the browser as a content view — loads the bundled Chromium engine sidecar into the app process and drives a native child over the app.sidecar channel. Native Chromium speed, built-in URL bar and bookmarks. A uniform bundled Chromium engine, not the OS webview."
+  },
+  "entry": "main.js",
+  "permissions": [
+    "ui",
+    "commands",
+    "programs",
+    "data",
+    "sidecar"
+  ],
+  "sidecars": [
+    {
+      "name": "browser-chromium",
+      "interface": "soksak-sidecar-browser-spec@1",
+      "reach": {
+        "fetch": {
+          "url": {
+            "darwin": "https://github.com/soksak-ai/soksak-sidecar-browser-chromium/releases/download/v0.1.1/soksak-sidecar-browser-chromium-0.1.1-darwin-arm64.tar.gz"
+          },
+          "sha256": {
+            "darwin": "88c14e79d11821f9efc9f8c139370c7a5cf3288771bda437b1f7bc596e7dc8fc"
+          }
+        }
+      }
+    }
+  ],
+  "configuration": [
+    {
+      "key": "homeUrl",
+      "type": "string",
+      "default": "about:blank",
+      "title": {
+        "ko": "시작 URL",
+        "en": "Start URL"
+      },
+      "description": {
+        "ko": "새 브라우저 탭이 처음 여는 주소.",
+        "en": "Address a new browser tab opens to."
+      }
+    },
+    {
+      "key": "browserNewWindow",
+      "type": "enum",
+      "enum": [
+        "tab",
+        "window"
+      ],
+      "enumLabels": [
+        {
+          "ko": "새 탭",
+          "en": "New tab"
+        },
+        {
+          "ko": "새 창",
+          "en": "New window"
+        }
+      ],
+      "default": "tab",
+      "title": {
+        "ko": "새 링크 열기",
+        "en": "Open new links in"
+      },
+      "description": {
+        "ko": "target=_blank / window.open 새 링크를 새 탭(앱 내 브라우저 뷰)으로 연다.",
+        "en": "Open target=_blank / window.open links as a new tab (in-app browser view)."
+      }
+    }
+  ],
+  "contributes": {
+    "views": [
+      {
+        "id": "content",
+        "title": {
+          "ko": "브라우저 (Chromium)",
+          "en": "Browser (Chromium)"
+        },
+        "icon": "🌐",
+        "placements": [
+          "content"
+        ],
+        "defaultPlacement": "content",
+        "transparent": true
+      }
+    ],
+    "programs": [
+      {
+        "id": "browser-chromium",
+        "path": {
+          "ko": "브라우저",
+          "en": "Browser"
+        },
+        "title": {
+          "ko": "Chromium",
+          "en": "Chromium"
+        },
+        "kind": "view",
+        "view": "content"
+      }
+    ],
+    "commands": [
+      {
+        "name": "ping",
+        "title": {
+          "ko": "플러그인 적재/버전 확인(E2E)",
+          "en": "Ping (load/version check)"
+        }
+      },
+      {
+        "name": "navigate",
+        "title": {
+          "ko": "URL 이동",
+          "en": "Navigate to URL"
+        }
+      },
+      {
+        "name": "back",
+        "title": {
+          "ko": "이전 페이지",
+          "en": "Go Back"
+        }
+      },
+      {
+        "name": "forward",
+        "title": {
+          "ko": "다음 페이지",
+          "en": "Go Forward"
+        }
+      },
+      {
+        "name": "reload",
+        "title": {
+          "ko": "새로고침",
+          "en": "Reload"
+        }
+      },
+      {
+        "name": "open",
+        "title": {
+          "ko": "브라우저 뷰 열기",
+          "en": "Open browser view"
+        }
+      },
+      {
+        "name": "devtools",
+        "title": {
+          "ko": "개발자 도구 탭 열기",
+          "en": "Open devtools tab"
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "id": "urlbar",
+        "description": {
+          "ko": "URL 입력창",
+          "en": "URL input bar"
+        }
+      },
+      {
+        "id": "back",
+        "description": {
+          "ko": "이전 버튼",
+          "en": "Back button"
+        }
+      },
+      {
+        "id": "forward",
+        "description": {
+          "ko": "다음 버튼",
+          "en": "Forward button"
+        }
+      },
+      {
+        "id": "reload",
+        "description": {
+          "ko": "새로고침 버튼",
+          "en": "Reload button"
+        }
+      },
+      {
+        "id": "devtools",
+        "description": {
+          "ko": "개발자 도구 버튼",
+          "en": "Developer tools button"
+        }
+      }
+    ]
+  }
+}
