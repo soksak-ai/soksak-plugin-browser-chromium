@@ -1,9 +1,9 @@
 {
-  "name": "soksak-plugin-browser-cef",
+  "name": "soksak-plugin-browser-chromium",
   "private": true,
   "version": "2.0.0",
   "type": "module",
-  "description": "soksak browser plugin — in-process Chromium (CEF) child rendered as a content view",
+  "description": "soksak browser plugin on the bundled Chromium engine sidecar",
   "scripts": {
     "build": "node build.mjs",
     "dev": "node build.mjs --watch",

@@ -157,6 +157,13 @@
           "ko": "개발자 도구 탭 열기",
           "en": "Open devtools tab"
         }
+      },
+      {
+        "name": "stats",
+        "title": {
+          "ko": "엔진 child 진단",
+          "en": "Engine child stats"
+        }
       }
     ],
     "nodes": [

@@ -1,8 +1,8 @@
 // browser.* 명령 — 내비게이션(navigate/back/forward/reload) + open. 매니페스트 contributes.commands
 // 와 1:1(declared≡actual). CLI/MCP 자동 노출. 엔진 조작은 Chromium 어댑터(app.sidecar 채널)
 // 경유 — 코어 비결합. eval/dom/media 는 엔진 v1 미지원이라 제공하지 않는다(후속: CDP).
-import type { PluginContext } from "./host";
-import { makeChromium } from "./chromium-adapter";
+import type { PluginApi, PluginContext } from "./host";
+import { makeChromium, devtoolsLabelFor, engineStats } from "./chromium-adapter";
 
 // 새 브라우저 탭을 열 때 mount 가 homeUrl 대신 소비할 "대기 URL".
 let pendingOpenUrl: string | null = null;
@@ -25,6 +25,32 @@ export function takePendingDevtools(): string | null {
   const l = pendingDevtoolsLabel;
   pendingDevtoolsLabel = null;
   return l;
+}
+
+// DevTools 탭 열기의 단일 경로(커맨드 핸들러 + 툴바 버튼 공용). 같은 inspected 의 DevTools 탭이 이미
+// 살아있으면 새로 만들지 않고 그 탭을 활성화한다(Chrome 의 토글 감각 — 중복 탭 방지).
+export async function openDevtoolsTab(
+  app: PluginApi,
+  inspectedLabel: string,
+): Promise<{ ok: boolean; focused?: boolean; error?: string }> {
+  const existing = devtoolsLabelFor(inspectedLabel);
+  if (existing) {
+    const viewId = existing.slice("chromium-".length);
+    const out = await app.commands
+      ?.execute("view.activate", { view: viewId })
+      .catch(() => null);
+    if (out && out.ok) return { ok: true, focused: true };
+    // 활성화 실패(뷰가 방금 닫힘 등) — 새로 여는 경로로 진행.
+  }
+  setPendingDevtools(inspectedLabel);
+  const out = await app.commands
+    ?.execute("view.open", { program: "browser-chromium" })
+    .catch(() => null);
+  if (!out || !out.ok) {
+    takePendingDevtools();
+    return { ok: false, error: "view.open failed" };
+  }
+  return { ok: true };
 }
 
 // 활성 뷰의 label + 현재 URL 레지스트리(마운트=등록, 언마운트=제거).
@@ -93,6 +119,11 @@ export function registerCommands(ctx: PluginContext): void {
     ctx.subscriptions.push(app.commands!.register(name, spec));
   };
 
+  reg("stats", {
+    description: "Live engine-side browser child ids (E2E/diagnostics — verifies close really destroyed the child).",
+    handler: async () => ({ ok: true, ids: await engineStats(app) }),
+  });
+
   reg("ping", {
     description: "Load/version check — returns the plugin id and engine (E2E).",
     handler: () => ({ ok: true, plugin: app.pluginId, engine: "chromium" }),
@@ -147,21 +178,15 @@ export function registerCommands(ctx: PluginContext): void {
   });
 
   reg("devtools", {
-    description: "Open Chrome DevTools for the active browser view as a new tab (splittable/movable like any view).",
+    description: "Open Chrome DevTools for the active browser view as a new tab (splittable/movable like any view). Focuses the existing DevTools tab if one is already open for that view.",
     triggers: { ko: "개발자 도구 인스펙터 devtools 열기" },
     params: targetParam,
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
       if (!e) return { ok: false, error: "no active browser view" };
-      // DevTools 도 일반 브라우저 뷰다 — 새 콘텐츠 뷰를 열고, 그 뷰가 마운트되며 inspected(e.label)의
-      // DevTools 를 임베드 child 로 붙인다. 이후 분할/이동/닫기는 코어 view 커맨드로 동일하게 제어된다.
-      setPendingDevtools(e.label);
-      const out = await app.commands!.execute("view.open", { program: "browser-chromium" }).catch(() => null);
-      if (!out || !out.ok) {
-        takePendingDevtools();
-        return { ok: false, error: "view.open failed" };
-      }
-      return { ok: true };
+      // DevTools 도 일반 브라우저 뷰다 — 새 뷰가 마운트되며 inspected(e.label)의 DevTools 프론트엔드를
+      // 연다. 이후 분할/이동/닫기는 코어 view 커맨드(드래그와 동일 경로)로 동일하게 제어된다.
+      return openDevtoolsTab(app, e.label);
     },
   });
 

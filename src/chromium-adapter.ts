@@ -32,6 +32,39 @@ function persist(): void {
 }
 
 const idByLabel = loadPersisted();
+
+// devtools 마커 — "이 label 은 inspected(값) 브라우저의 DevTools 탭"이라는 정체성. 드래그 분할/이동은
+// 뷰 unmount→remount 라서 1회성 pending 값으로는 재마운트에서 정체성이 소실된다(일반 툴바가 나타나는
+// 오동작) → idByLabel 과 같은 sessionStorage 영속(창별·reload 생존). 파괴 확정 시에만 지운다.
+const DT_KEY = "soksak-plugin-browser-chromium:devtools";
+function loadDevtoolsMarks(): Map<string, string> {
+  try {
+    const raw = sessionStorage.getItem(DT_KEY);
+    if (!raw) return new Map();
+    return new Map(Object.entries(JSON.parse(raw) as Record<string, string>));
+  } catch {
+    return new Map();
+  }
+}
+const devtoolsByLabel = loadDevtoolsMarks();
+function persistDevtools(): void {
+  try {
+    sessionStorage.setItem(DT_KEY, JSON.stringify(Object.fromEntries(devtoolsByLabel)));
+  } catch {
+    /* 저장 불가 환경 — 영속 없이 동작 */
+  }
+}
+/** label 이 DevTools 탭이면 inspected label, 아니면 null. */
+export function devtoolsMarkOf(label: string): string | null {
+  return devtoolsByLabel.get(label) ?? null;
+}
+/** inspected 브라우저의 살아있는 DevTools 탭 label(중복 열기 방지용). 없으면 null. */
+export function devtoolsLabelFor(inspectedLabel: string): string | null {
+  for (const [l, insp] of devtoolsByLabel)
+    if (insp === inspectedLabel && idByLabel.has(l)) return l;
+  return null;
+}
+
 // 이전 JS 인스턴스에서 넘어온 미입양 label — open() 이 입양하면 제거, grace 후 잔여는 회수.
 const unclaimed = new Set<string>(idByLabel.keys());
 let sweepScheduled = idByLabel.size > 0;
@@ -43,6 +76,7 @@ function scheduleOrphanSweep(app: PluginApi): void {
     for (const label of unclaimed) {
       const id = idByLabel.get(label);
       idByLabel.delete(label);
+      devtoolsByLabel.delete(label);
       if (id != null) {
         console.warn(`[browser-chromium] 미입양 child 회수: ${label} (id=${id})`);
         void send(app, { type: "close", id });
@@ -50,6 +84,7 @@ function scheduleOrphanSweep(app: PluginApi): void {
     }
     unclaimed.clear();
     persist();
+    persistDevtools();
   }, ADOPT_GRACE_MS);
 }
 
@@ -84,6 +119,12 @@ async function send(
     console.warn("[browser-chromium] send 실패:", e);
     return null;
   }
+}
+
+/** 엔진 child id 목록(E2E/진단) — close 가 child 를 실제 파괴했는지의 단일 진실(뷰 수만으론 유령을 못 잡는다). */
+export async function engineStats(app: PluginApi): Promise<number[]> {
+  const out = await send(app, { type: "stats" });
+  return out && Array.isArray(out.ids) ? (out.ids as number[]) : [];
 }
 
 // browser-view 가 기대하는 WebviewApi 를 Chromium 엔진으로 만족시킨다. v1 미지원 표면(eval/devtools/
@@ -143,7 +184,9 @@ export function makeChromium(app: PluginApi): WebviewApi {
         const id = out && typeof out.id === "number" ? out.id : null;
         if (id != null) {
           idByLabel.set(label, id);
+          devtoolsByLabel.set(label, o.devtoolsOf);
           persist();
+          persistDevtools();
         }
         return;
       }
@@ -216,7 +259,9 @@ export function makeChromium(app: PluginApi): WebviewApi {
             return; // 매핑 유지 — 재마운트가 입양
           }
           idByLabel.delete(label);
+          devtoolsByLabel.delete(label);
           persist();
+          persistDevtools();
           void send(app, { type: "close", id });
         })();
       }, CLOSE_DEBOUNCE_MS);
