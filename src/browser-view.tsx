@@ -12,6 +12,8 @@ import { t } from "./i18n";
 import {
   makeChromium,
   devtoolsMarkOf,
+  devtoolsLabelFor,
+  subscribeDevtoolsMap,
   inlineMarkOf,
   setInlineMark,
   clearInlineMark,
@@ -202,6 +204,16 @@ function BrowserViewImpl({
     if (!ctx.viewId) return;
     return registerInlineController(ctx.viewId, toggleInline);
   }, [ctx.viewId, toggleInline]);
+  // 이 브라우저의 DevTools "탭"이 살아있는가 — 어댑터 매핑 구독(버튼 열림 표시, 폴링 0).
+  const [dtTabOpen, setDtTabOpen] = useState<boolean>(() =>
+    label ? devtoolsLabelFor(label) != null : false,
+  );
+  useEffect(() => {
+    if (!label) return;
+    const update = () => setDtTabOpen(devtoolsLabelFor(label) != null);
+    update();
+    return subscribeDevtoolsMap(update);
+  }, [label]);
   // 내부 divider 드래그 — 분할축 비율 조절. divider 는 두 홀 사이 6px DOM 띠라 마우스를 직접
   // 받고(아래 레이어의 child 는 이 띠를 안 덮음), child 위로 이어지는 드래그는 코어 브릿지
   // ([data-native-drag])가 중계한다. ratio = 분할축에서 "페이지" 몫 — side 에 따라 페이지가
@@ -620,7 +632,8 @@ function BrowserViewImpl({
         />
         <button
           type="button"
-          className="bv-btn"
+          // 열림 표시: inline 이든 독립 탭이든 이 브라우저의 DevTools 가 살아있으면 선택 상태.
+          className={`bv-btn${inlineDt != null || dtTabOpen ? " on" : ""}`}
           title={t("inspect", lang)}
           data-node="devtools"
           onClick={() => {

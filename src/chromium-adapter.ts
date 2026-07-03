@@ -29,6 +29,8 @@ function persist(): void {
   } catch {
     /* 저장 불가 환경(테스트 등) — 영속 없이 동작 */
   }
+  // devtools "열림" 판정(devtoolsLabelFor)은 idByLabel 생존도 본다 — 매핑 변이 통지 공유.
+  for (const cb of dtMapListeners) cb();
 }
 
 const idByLabel = loadPersisted();
@@ -47,21 +49,32 @@ function loadDevtoolsMarks(): Map<string, string> {
   }
 }
 const devtoolsByLabel = loadDevtoolsMarks();
+// devtools 매핑 변화 구독 — 툴바 버튼의 "열림" 표시 등 UI 가 반응(폴링 금지). 모든 매핑 변이는
+// persistDevtools 를 지나므로 여기가 단일 통지 지점.
+const dtMapListeners = new Set<() => void>();
+export function subscribeDevtoolsMap(cb: () => void): () => void {
+  dtMapListeners.add(cb);
+  return () => {
+    dtMapListeners.delete(cb);
+  };
+}
 function persistDevtools(): void {
   try {
     sessionStorage.setItem(DT_KEY, JSON.stringify(Object.fromEntries(devtoolsByLabel)));
   } catch {
     /* 저장 불가 환경 — 영속 없이 동작 */
   }
+  for (const cb of dtMapListeners) cb();
 }
 /** label 이 DevTools 탭이면 inspected label, 아니면 null. */
 export function devtoolsMarkOf(label: string): string | null {
   return devtoolsByLabel.get(label) ?? null;
 }
-/** inspected 브라우저의 살아있는 DevTools 탭 label(중복 열기 방지용). 없으면 null. */
+/** inspected 브라우저의 살아있는 DevTools "탭" label(중복 열기 방지·열림 표시용). 없으면 null.
+ *  inline child(label "#dt" 접미)는 탭이 아니다 — 파킹돼 살아있어도 탭 판정에서 제외. */
 export function devtoolsLabelFor(inspectedLabel: string): string | null {
   for (const [l, insp] of devtoolsByLabel)
-    if (insp === inspectedLabel && idByLabel.has(l)) return l;
+    if (insp === inspectedLabel && !l.includes("#dt") && idByLabel.has(l)) return l;
   return null;
 }
 /** 진단: devtools label → inspected label 매핑 스냅샷(stats 커맨드 노출 — E2E/디버깅). */

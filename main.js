@@ -12811,6 +12811,7 @@ function persist() {
     sessionStorage.setItem(STORE_KEY, JSON.stringify(Object.fromEntries(idByLabel)));
   } catch {
   }
+  for (const cb of dtMapListeners) cb();
 }
 var idByLabel = loadPersisted();
 var DT_KEY = "soksak-plugin-browser-chromium:devtools";
@@ -12824,18 +12825,26 @@ function loadDevtoolsMarks() {
   }
 }
 var devtoolsByLabel = loadDevtoolsMarks();
+var dtMapListeners = /* @__PURE__ */ new Set();
+function subscribeDevtoolsMap(cb) {
+  dtMapListeners.add(cb);
+  return () => {
+    dtMapListeners.delete(cb);
+  };
+}
 function persistDevtools() {
   try {
     sessionStorage.setItem(DT_KEY, JSON.stringify(Object.fromEntries(devtoolsByLabel)));
   } catch {
   }
+  for (const cb of dtMapListeners) cb();
 }
 function devtoolsMarkOf(label) {
   return devtoolsByLabel.get(label) ?? null;
 }
 function devtoolsLabelFor(inspectedLabel) {
   for (const [l, insp] of devtoolsByLabel)
-    if (insp === inspectedLabel && idByLabel.has(l)) return l;
+    if (insp === inspectedLabel && !l.includes("#dt") && idByLabel.has(l)) return l;
   return null;
 }
 function devtoolsMapSnapshot() {
@@ -13457,6 +13466,15 @@ function BrowserViewImpl({
     if (!ctx.viewId) return;
     return registerInlineController(ctx.viewId, toggleInline);
   }, [ctx.viewId, toggleInline]);
+  const [dtTabOpen, setDtTabOpen] = (0, import_react.useState)(
+    () => label ? devtoolsLabelFor(label) != null : false
+  );
+  (0, import_react.useEffect)(() => {
+    if (!label) return;
+    const update = () => setDtTabOpen(devtoolsLabelFor(label) != null);
+    update();
+    return subscribeDevtoolsMap(update);
+  }, [label]);
   const onDtDividerDown = (0, import_react.useCallback)(
     (e) => {
       e.preventDefault();
@@ -13796,7 +13814,7 @@ function BrowserViewImpl({
         "button",
         {
           type: "button",
-          className: "bv-btn",
+          className: `bv-btn${inlineDt != null || dtTabOpen ? " on" : ""}`,
           title: t("inspect", lang),
           "data-node": "devtools",
           onClick: () => {
