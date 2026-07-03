@@ -13345,6 +13345,7 @@ function isComposingEnter(e) {
   return e.key === "Enter" && (e.nativeEvent.isComposing || e.keyCode === 229);
 }
 var LIVE_THROTTLE_MS = 32;
+var dtDividerDragActive = false;
 var STABLE_STOP_FRAMES = 4;
 function normalizeUrl2(input) {
   const s = input.trim();
@@ -13422,9 +13423,11 @@ function BrowserViewImpl({
   const onDtDividerDown = (0, import_react.useCallback)(
     (e) => {
       e.preventDefault();
+      if (dtDividerDragActive) return;
       const area = areaRef.current;
       const wrap = area?.parentElement;
       if (!area || !wrap || !label) return;
+      dtDividerDragActive = true;
       const areaTop = area.getBoundingClientRect().top;
       const wrapBottom = wrap.getBoundingClientRect().bottom;
       const usable = Math.max(1, wrapBottom - areaTop - 6);
@@ -13436,6 +13439,7 @@ function BrowserViewImpl({
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        dtDividerDragActive = false;
         setInlineMark(label, last);
       };
       window.addEventListener("mousemove", onMove);
@@ -13797,7 +13801,16 @@ function BrowserViewImpl({
       }
     ),
     inlineDt != null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-dt-divider", "data-node": "dt-divider", onMouseDown: onDtDividerDown }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          className: "bv-dt-divider",
+          "data-node": "dt-divider",
+          "data-native-drag": "",
+          style: { flex: "0 0 6px", cursor: "row-resize", background: "var(--bd-soft, #2a2a2a)" },
+          onMouseDown: onDtDividerDown
+        }
+      ),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         InlineDevtools,
         {
@@ -14049,7 +14062,11 @@ var GLOBAL_CSS = `
 `;
 function injectStyles() {
   const STYLE_ID = "sk-browser-style";
-  if (document.getElementById(STYLE_ID)) return;
+  const existing = document.getElementById(STYLE_ID);
+  if (existing) {
+    if (existing.textContent !== GLOBAL_CSS) existing.textContent = GLOBAL_CSS;
+    return;
+  }
   const s = document.createElement("style");
   s.id = STYLE_ID;
   s.textContent = GLOBAL_CSS;
