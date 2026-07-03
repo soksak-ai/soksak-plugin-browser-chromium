@@ -70,14 +70,25 @@ export function devtoolsMapSnapshot(): Record<string, string> {
 }
 
 // ── inline DevTools(같은 탭 내부 분할) 마커 ─────────────────────────────────────
-// label(호스트 브라우저) → 분할 비율(페이지 몫 0..1). 존재 = inline DevTools 열림.
-// devtoolsByLabel 과 같은 sessionStorage 영속 — 드래그 이동(unmount→remount)·reload 생존.
+// label(호스트 브라우저) → { ratio: 분할축에서 페이지 몫(0..1), side: DevTools 도킹 방향 }.
+// 존재 = inline DevTools 열림. devtoolsByLabel 과 같은 sessionStorage 영속 — 이동·reload 생존.
+export type InlineSide = "top" | "bottom" | "left" | "right";
+export interface InlineMark {
+  ratio: number;
+  side: InlineSide;
+}
 const INLINE_KEY = "soksak-plugin-browser-chromium:inline";
-function loadInline(): Map<string, number> {
+function loadInline(): Map<string, InlineMark> {
   try {
     const raw = sessionStorage.getItem(INLINE_KEY);
     if (!raw) return new Map();
-    return new Map(Object.entries(JSON.parse(raw) as Record<string, number>));
+    const obj = JSON.parse(raw) as Record<string, number | InlineMark>;
+    const m = new Map<string, InlineMark>();
+    for (const [k, v] of Object.entries(obj)) {
+      // 구형(숫자 = ratio만) → bottom 도킹으로 승격.
+      m.set(k, typeof v === "number" ? { ratio: v, side: "bottom" } : v);
+    }
+    return m;
   } catch {
     return new Map();
   }
@@ -90,12 +101,12 @@ function persistInline(): void {
     /* 저장 불가 환경 — 영속 없이 동작 */
   }
 }
-/** inline DevTools 가 열려 있으면 분할 비율, 아니면 null. */
-export function inlineMarkOf(label: string): number | null {
+/** inline DevTools 가 열려 있으면 { ratio, side }, 아니면 null. */
+export function inlineMarkOf(label: string): InlineMark | null {
   return inlineByLabel.get(label) ?? null;
 }
-export function setInlineMark(label: string, ratio: number): void {
-  inlineByLabel.set(label, ratio);
+export function setInlineMark(label: string, mark: InlineMark): void {
+  inlineByLabel.set(label, mark);
   persistInline();
 }
 export function clearInlineMark(label: string): void {

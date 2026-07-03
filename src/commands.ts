@@ -80,20 +80,26 @@ export async function openDevtoolsTab(
 
 // inline DevTools(같은 탭 내부 분할) 토글 컨트롤러 — 마운트된 브라우저 뷰가 등록(viewId→toggle),
 // 커맨드(devtools-inline / devtools 디스패처)가 호출한다. 뷰가 언마운트면 등록 해제.
-const inlineControllers = new Map<string, (screencast?: boolean) => void>();
+// side 지정 + 이미 열림 = 토글 대신 도킹 방향 전환(뷰 쪽 toggle 구현이 그 의미를 소유).
+export type InlineSideArg = "top" | "bottom" | "left" | "right";
+const inlineControllers = new Map<string, (screencast?: boolean, side?: InlineSideArg) => void>();
 export function registerInlineController(
   viewId: string,
-  toggle: (screencast?: boolean) => void,
+  toggle: (screencast?: boolean, side?: InlineSideArg) => void,
 ): () => void {
   inlineControllers.set(viewId, toggle);
   return () => {
     inlineControllers.delete(viewId);
   };
 }
-export function toggleInlineDevtools(viewId: string, screencast?: boolean): boolean {
+export function toggleInlineDevtools(
+  viewId: string,
+  screencast?: boolean,
+  side?: InlineSideArg,
+): boolean {
   const t = inlineControllers.get(viewId);
   if (!t) return false;
-  t(screencast);
+  t(screencast, side);
   return true;
 }
 
@@ -277,14 +283,26 @@ export function registerCommands(ctx: PluginContext): void {
   });
 
   reg("devtools-inline", {
-    description: "Toggle Chrome DevTools as a split inside the browser view itself (page on top, DevTools below), regardless of the devtoolsOpenMode setting.",
-    triggers: { ko: "개발자 도구 내부 분할 인라인 devtools inline" },
-    params: { ...targetParam, ...screencastParam },
+    description: "Toggle Chrome DevTools as a split inside the browser view itself, regardless of the devtoolsOpenMode setting. side docks DevTools to that edge (default bottom; last side is remembered); passing side while already open re-docks instead of closing.",
+    triggers: { ko: "개발자 도구 내부 분할 인라인 도킹 방향 devtools inline" },
+    params: {
+      ...targetParam,
+      ...screencastParam,
+      side: {
+        type: "string",
+        description: "Dock side for DevTools inside the view: top | bottom | left | right. When already open, changes the dock side instead of toggling.",
+        required: false,
+      },
+    },
     handler: async (p) => {
       const viewId = resolveViewId(explicitTarget(p));
       if (!viewId) return { ok: false, error: "no active browser view" };
-      return toggleInlineDevtools(viewId, scOf(p))
-        ? { ok: true, mode: "inline" }
+      const side =
+        p.side === "top" || p.side === "bottom" || p.side === "left" || p.side === "right"
+          ? p.side
+          : undefined;
+      return toggleInlineDevtools(viewId, scOf(p), side)
+        ? { ok: true, mode: "inline", ...(side ? { side } : {}) }
         : { ok: false, error: "browser view not mounted" };
     },
   });

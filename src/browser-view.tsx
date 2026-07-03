@@ -15,6 +15,8 @@ import {
   inlineMarkOf,
   setInlineMark,
   clearInlineMark,
+  type InlineMark,
+  type InlineSide,
 } from "./chromium-adapter";
 import {
   registerLabel,
@@ -104,6 +106,25 @@ function IconMenu() {
     </svg>
   );
 }
+// 도킹 방향 아이콘 — 사각 외곽 + 도킹 변의 채움 막대(VSCode 패널 위치 아이콘 동형).
+function IconDock({ side }: { side: "top" | "bottom" | "left" | "right" }) {
+  const bar =
+    side === "bottom" ? (
+      <rect x="5" y="13" width="14" height="6" rx="1" fill="currentColor" stroke="none" />
+    ) : side === "top" ? (
+      <rect x="5" y="5" width="14" height="6" rx="1" fill="currentColor" stroke="none" />
+    ) : side === "left" ? (
+      <rect x="5" y="5" width="6" height="14" rx="1" fill="currentColor" stroke="none" />
+    ) : (
+      <rect x="13" y="5" width="6" height="14" rx="1" fill="currentColor" stroke="none" />
+    );
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      {bar}
+    </svg>
+  );
+}
 function IconTerminal() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -143,26 +164,37 @@ function BrowserViewImpl({
   const devtoolsTarget = devtoolsOf ?? (label ? devtoolsMarkOf(label) : null);
 
   const areaRef = useRef<HTMLDivElement>(null);
-  // inline DevTools(같은 탭 내부 분할) — 값 = 페이지 몫 비율(0..1), null = 닫힘. 재마운트는
-  // 어댑터 마커에서 복원(이동·reload 생존). 토글 오프는 child 를 파킹(어댑터 판정이 호스트 뷰
-  // 존재를 보고 보존) — 다시 켜면 입양으로 DevTools 상태가 그대로 살아난다.
-  const [inlineDt, setInlineDt] = useState<number | null>(() =>
+  // inline DevTools(같은 탭 내부 분할) — { ratio: 분할축 페이지 몫, side: 도킹 방향 }, null = 닫힘.
+  // 재마운트는 어댑터 마커에서 복원(이동·reload 생존). 토글 오프는 child 를 파킹(어댑터 판정이
+  // 호스트 뷰 존재를 보고 보존) — 다시 켜면 입양으로 DevTools 상태가 그대로 살아난다.
+  const [inlineDt, setInlineDt] = useState<InlineMark | null>(() =>
     label ? inlineMarkOf(label) : null,
   );
   const inlineScRef = useRef<boolean | undefined>(undefined);
+  // updater 안에 side-effect(마커 저장)를 두지 않는다 — React 는 updater 를 재호출할 수 있어
+  // 토글이 뒤집힌다. 현재값은 ref 로 읽고, 다음 상태를 밖에서 계산해 저장+set 을 한 번씩만.
+  const inlineDtRef = useRef<InlineMark | null>(inlineDt);
+  inlineDtRef.current = inlineDt;
   const toggleInline = useCallback(
-    (screencast?: boolean) => {
-      if (!label) return;
-      setInlineDt((cur) => {
-        if (cur == null) {
-          inlineScRef.current = screencast;
-          const r = inlineMarkOf(label) ?? 0.55;
-          setInlineMark(label, r);
-          return r;
-        }
-        clearInlineMark(label);
-        return null;
-      });
+    (screencast?: boolean, side?: InlineSide): InlineMark | null => {
+      if (!label) return null;
+      const cur = inlineDtRef.current;
+      let next: InlineMark | null;
+      if (cur == null) {
+        inlineScRef.current = screencast;
+        const prev = inlineMarkOf(label);
+        next = { ratio: prev?.ratio ?? 0.55, side: side ?? prev?.side ?? "bottom" };
+      } else if (side && side !== cur.side) {
+        // 이미 열림 + side 지정 = 토글 대신 도킹 방향 전환.
+        next = { ...cur, side };
+      } else {
+        next = null;
+      }
+      if (next) setInlineMark(label, next);
+      else clearInlineMark(label);
+      inlineDtRef.current = next;
+      setInlineDt(next);
+      return next;
     },
     [label],
   );
@@ -170,22 +202,30 @@ function BrowserViewImpl({
     if (!ctx.viewId) return;
     return registerInlineController(ctx.viewId, toggleInline);
   }, [ctx.viewId, toggleInline]);
-  // 내부 divider 드래그 — 페이지/DevTools 비율 조절. divider 는 두 홀 사이 6px DOM 띠라
-  // 마우스를 직접 받는다(아래 레이어의 child 는 이 띠를 안 덮음).
+  // 내부 divider 드래그 — 분할축 비율 조절. divider 는 두 홀 사이 6px DOM 띠라 마우스를 직접
+  // 받고(아래 레이어의 child 는 이 띠를 안 덮음), child 위로 이어지는 드래그는 코어 브릿지
+  // ([data-native-drag])가 중계한다. ratio = 분할축에서 "페이지" 몫 — side 에 따라 페이지가
+  // 앞(bottom/right)이거나 뒤(top/left)라서 환산이 갈린다.
   const onDtDividerDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       if (dtDividerDragActive) return; // 실 DOM + 브릿지 합성 mousedown 중복 시작 무시
       const area = areaRef.current;
       const wrap = area?.parentElement;
-      if (!area || !wrap || !label) return;
+      if (!area || !wrap || !label || !inlineDt) return;
       dtDividerDragActive = true;
-      const areaTop = area.getBoundingClientRect().top;
-      const wrapBottom = wrap.getBoundingClientRect().bottom;
-      const usable = Math.max(1, wrapBottom - areaTop - 6);
-      let last = inlineDt ?? 0.55;
+      const side = inlineDt.side;
+      const horizontal = side === "left" || side === "right";
+      const pageFirst = side === "bottom" || side === "right"; // 흐름상 페이지가 divider 앞
+      const wr = wrap.getBoundingClientRect();
+      const start = horizontal ? wr.left : wr.top;
+      const usable = Math.max(1, (horizontal ? wr.width : wr.height) - 6);
+      let last = inlineDt;
       const onMove = (ev: MouseEvent) => {
-        last = Math.min(0.85, Math.max(0.15, (ev.clientY - areaTop) / usable));
+        const pos = horizontal ? ev.clientX : ev.clientY;
+        const frac = (pos - start) / usable;
+        const ratio = Math.min(0.85, Math.max(0.15, pageFirst ? frac : 1 - frac));
+        last = { ...last, ratio };
         setInlineDt(last);
       };
       const onUp = () => {
@@ -391,6 +431,22 @@ function BrowserViewImpl({
     };
   }, [syncBounds, app]);
 
+  // 도킹 방향 전환(상↔하·좌↔우) = 두 홀의 크기는 그대로고 "위치만" 스왑된다 → ResizeObserver 가
+  // 안 울려 child 가 옛 자리에 남는다(실측: 정착 후에도 페이지/DevTools 위치 불변 + 유령 밴드).
+  // 전환 시 강제 스냅(즉시 + 레이아웃 정착 보정 1회). 키는 side 만 — ratio(드래그)는 RO 가 잡고,
+  // 여기 매프레임 강제 스냅을 태우면 드래그 스로틀이 무력화된다.
+  const inlineSide = inlineDt?.side ?? null;
+  useEffect(() => {
+    if (!inlineSide) return;
+    lastRectRef.current = "";
+    syncBounds(true);
+    const t = setTimeout(() => {
+      lastRectRef.current = "";
+      syncBounds(true);
+    }, 120);
+    return () => clearTimeout(t);
+  }, [inlineSide, syncBounds]);
+
   // 탭 전환 가시성 — 코어는 비활성 콘텐츠 슬롯을 화면 밖으로 "파킹"한다(위치 이동, 크기 무변 →
   // ResizeObserver 미발화). IntersectionObserver 로 슬롯이 뷰포트에 들고 남(파킹/언파킹)을 즉시
   // 잡아 엔진 child 를 hidden 토글하고, 보일 때 현재 rect 로 bounds 를 강제 스냅한다 → 탭 전환 빠릿.
@@ -576,6 +632,21 @@ function BrowserViewImpl({
         >
           <IconTerminal />
         </button>
+        {inlineDt != null &&
+          (["bottom", "top", "left", "right"] as const).map((sd) => (
+            <button
+              key={sd}
+              type="button"
+              className={`bv-btn${inlineDt.side === sd ? " on" : ""}`}
+              title={t(`dock${sd[0].toUpperCase()}${sd.slice(1)}`, lang)}
+              data-node={`dock-${sd}/${ctx.viewId ?? "solo"}`}
+              onClick={() => {
+                if (inlineDt.side !== sd) toggleInline(undefined, sd);
+              }}
+            >
+              <IconDock side={sd} />
+            </button>
+          ))}
         <button
           type="button"
           className={`bv-btn${isBookmarked ? " on" : ""}`}
@@ -614,32 +685,73 @@ function BrowserViewImpl({
           ))}
         </div>
       )}
-      {/* child webview 가 이 영역 위에 정렬된다(레이어 원칙: DOM 아래 네이티브). */}
-      <div
-        className="bv-area"
-        ref={areaRef}
-        style={inlineDt != null ? { flex: `${inlineDt} 1 0px` } : undefined}
-      />
-      {inlineDt != null && (
-        <>
+      {/* child webview 가 이 영역 위에 정렬된다(레이어 원칙: DOM 아래 네이티브). inline DevTools 는
+          도킹 방향(side)에 따라 페이지 앞/뒤에 배치 — key 로 요소 정체성을 고정해 방향 전환 시
+          홀 div 재생성(child 재앵커 깜빡임)을 막는다. */}
+      {(() => {
+        const side = inlineDt?.side;
+        const horizontal = side === "left" || side === "right";
+        const pageFirst = side === "bottom" || side === "right";
+        const pageEl = (
           <div
+            key="page"
+            className="bv-area"
+            ref={areaRef}
+            style={inlineDt ? { flex: `${inlineDt.ratio} 1 0px`, minWidth: 0 } : undefined}
+          />
+        );
+        if (!inlineDt) {
+          return (
+            <div className="bv-split" style={{ flexDirection: "column" }}>
+              {pageEl}
+            </div>
+          );
+        }
+        const dividerEl = (
+          <div
+            key="divider"
             className="bv-dt-divider"
-            data-node="dt-divider"
+            // 인스턴스(viewId) 포함 — 같은 contrib 뷰가 여러 탭이면 노드 주소가 충돌해
+            // ui.measure/click 이 항상 첫 요소만 잡는다(실측: E2E 가 남의 divider 측정).
+            data-node={`dt-divider/${ctx.viewId ?? "solo"}`}
             data-native-drag=""
             // 크기·커서는 inline 이 정본(스타일시트 전달 실패에도 6px 히트영역 보장 — 실측:
             // 시트만으로는 h=0 이 관측됨). hover 강조만 시트(.bv-dt-divider:hover)에 남긴다.
-            style={{ flex: "0 0 6px", cursor: "row-resize", background: "var(--bd-soft, #2a2a2a)" }}
+            style={{
+              flex: "0 0 6px",
+              cursor: horizontal ? "col-resize" : "row-resize",
+              background: "var(--bd-soft, #2a2a2a)",
+            }}
             onMouseDown={onDtDividerDown}
           />
+        );
+        const dtEl = (
           <InlineDevtools
+            key="dt"
             app={app}
             webview={webview}
             hostLabel={label}
-            grow={1 - inlineDt}
+            grow={1 - inlineDt.ratio}
+            side={inlineDt.side}
             screencast={inlineScRef.current}
           />
-        </>
-      )}
+        );
+        // 자식 순서는 항상 [page, divider, dt] 고정 — 방향 전환은 flexDirection(reverse 포함)만
+        // 바꾼다. 순서 재배열(DOM 이동)은 같은 축 전환(상↔하·좌↔우)에서 중간 단계가 보이는
+        // 원인이었다(실측) — reverse 방향이면 전환이 늘 순수 스타일 1단계다.
+        const dir = horizontal
+          ? pageFirst
+            ? "row"
+            : "row-reverse"
+          : pageFirst
+            ? "column"
+            : "column-reverse";
+        return (
+          <div className="bv-split" style={{ flexDirection: dir as React.CSSProperties["flexDirection"] }}>
+            {[pageEl, dividerEl, dtEl]}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -654,12 +766,14 @@ function InlineDevtools({
   webview,
   hostLabel,
   grow,
+  side,
   screencast,
 }: {
   app: PluginApi;
   webview: WebviewApi;
   hostLabel: string;
   grow: number;
+  side: InlineSide;
   screencast?: boolean;
 }) {
   const dtLabel = `${hostLabel}#dt`;
@@ -719,6 +833,17 @@ function InlineDevtools({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dtLabel]);
 
+  // 도킹 방향 전환 = 위치만 스왑(RO 미발화) — 강제 스냅(호스트와 동일 근거).
+  useEffect(() => {
+    lastRectRef.current = "";
+    sync(true);
+    const t = setTimeout(() => {
+      lastRectRef.current = "";
+      sync(true);
+    }, 120);
+    return () => clearTimeout(t);
+  }, [side, sync]);
+
   // bounds 추종(자가종료 rAF) + 가시성(탭 파킹) — 호스트 패턴의 축약본.
   useEffect(() => {
     const el = ref.current;
@@ -767,7 +892,9 @@ function InlineDevtools({
     };
   }, [sync, webview, dtLabel, app]);
 
-  return <div className="bv-dt-area" ref={ref} style={{ flex: `${grow} 1 0px` }} />;
+  return (
+    <div className="bv-dt-area" ref={ref} style={{ flex: `${grow} 1 0px`, minWidth: 0 }} />
+  );
 }
 
 export const BrowserView = memo(BrowserViewImpl);

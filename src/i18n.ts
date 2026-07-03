@@ -12,6 +12,10 @@ const EN: Dict = {
   removeBookmark: "Remove bookmark",
   noBookmarks: "No bookmarks",
   inspect: "Inspect (devtools)",
+  dockBottom: "Dock DevTools to bottom",
+  dockTop: "Dock DevTools to top",
+  dockLeft: "Dock DevTools to left",
+  dockRight: "Dock DevTools to right",
 };
 
 const KO: Dict = {
@@ -25,6 +29,10 @@ const KO: Dict = {
   removeBookmark: "즐겨찾기 제거",
   noBookmarks: "즐겨찾기가 없습니다",
   inspect: "인스펙트(devtools)",
+  dockBottom: "DevTools 아래 도킹",
+  dockTop: "DevTools 위 도킹",
+  dockLeft: "DevTools 왼쪽 도킹",
+  dockRight: "DevTools 오른쪽 도킹",
 };
 
 export function t(key: string, lang: string): string {

@@ -260,6 +260,30 @@ async function main() {
     (st8c.ids || []).length === (st8b.ids || []).length,
     "inline 재토글 = 기존 child 입양(재생성 0)",
   );
+  // 도킹 방향 전환 — side 지정은 토글이 아니라 재도킹. 노드 주소는 인스턴스 구분이 없어
+  // (다른 브라우저 뷰의 dt-divider 와 동일 주소) 단일 측정이 남의 divider 를 잡을 수 있다 —
+  // 전체 divider 의 방향 집계(수평/수직 개수)가 우리 전환만큼 이동했는지로 단언한다.
+  const dividerOrientations = async () => {
+    const tr = await rpc("ui.tree", {});
+    // 노드 경로는 dt-divider/<viewId>(인스턴스 유일) — 주소 충돌 없이 각각 측정 가능.
+    const dvs = (tr.nodes || []).filter((n) => n.nodePath && n.nodePath.includes("dt-divider"));
+    let h = 0, v = 0;
+    for (const dv of dvs) {
+      const m = await rpc("ui.measure", { address: dv.address }).catch(() => null);
+      if (!m || !m.rect) continue;
+      if (m.rect.w > m.rect.h) h++;
+      else v++;
+    }
+    return { h, v };
+  };
+  const oBefore = await dividerOrientations();
+  await rpc(cmd("devtools-inline"), { viewId: b8, side: "right" });
+  await sleep(1200);
+  const oAfter = await dividerOrientations();
+  ok(
+    oAfter.v === oBefore.v + 1 && oAfter.h === oBefore.h - 1,
+    `inline 도킹 방향 전환(bottom→right): 가로 ${oBefore.h}→${oAfter.h}, 세로 ${oBefore.v}→${oAfter.v}`,
+  );
   await rpc("view.close", { view: b8 });
   myViews.delete(b8);
   await sleep(2500);
