@@ -25,13 +25,6 @@ function isComposingEnter(
 const LIVE_THROTTLE_MS = 32;
 // 슬롯 rect 가 이 프레임 수만큼 연속 무변화면(=드래그 아님) 추종 루프를 멈춘다(idle 폴링 0).
 const STABLE_STOP_FRAMES = 4;
-// 분할 divider 회피 여유. 네이티브 child(엔진)는 OS 뷰라 divider(코어 DOM, z-index)를 항상 덮어
-// 리사이즈 드래그를 가로챈다. 그래서 "이웃 패널이 있는 변"(=divider 가 지나는 변)마다 이만큼 안으로
-// 물려 그 틈에서 divider 가 hover 된다. divider 실폭 6px(경계 ±3)+여유 → 인접 두 child 간 gap ≥ 8px.
-const DIVIDER_GAP = 4;
-// 분할 컨테이너(.egroup-area) 변에서 이 이내면 최외곽(창 끝) = divider 없음 → inset 불필요.
-// pane-inset(최대 6px)은 넉넉히 포함하되, 내부 divider 변(분할비율 위치, 보통 수십 px)과는 구분된다.
-const EDGE_NEAR_PX = 12;
 
 // ── URL 정규화 (코어 BrowserView.tsx 와 동일) ────────────────────────────────
 function normalizeUrl(input: string): string {
@@ -194,19 +187,11 @@ function BrowserViewImpl({
       // 숨김(다른 탭) 상태면 bounds 를 보내지 않는다 — 가시성은 IntersectionObserver 가 관리(아래).
       if (!lastVisibleRef.current) return "same";
       const r = el.getBoundingClientRect();
-      // divider 회피 inset — 분할 컨테이너 최외곽이 아닌 변(이웃 있음=divider 지나는 변)만 안으로 물린다.
-      // 최외곽(창 끝)은 그대로 두어 불필요한 여백을 만들지 않는다(단일 패널이면 네 변 모두 최외곽 → inset 0).
-      const cont = el.closest(".egroup-area")?.getBoundingClientRect();
-      const g = DIVIDER_GAP;
-      const insetL = !cont || r.left - cont.left <= EDGE_NEAR_PX ? 0 : g;
-      const insetR = !cont || cont.right - r.right <= EDGE_NEAR_PX ? 0 : g;
-      const insetT = !cont || r.top - cont.top <= EDGE_NEAR_PX ? 0 : g;
-      const insetB = !cont || cont.bottom - r.bottom <= EDGE_NEAR_PX ? 0 : g;
       // 정수 스냅: rect 소수점 → 네이티브 반올림이 홀과 어긋남 방지(ceil/floor).
-      const x = Math.ceil(r.left + insetL);
-      const y = Math.ceil(r.top + insetT);
-      const w = Math.max(1, Math.floor(r.right - insetR) - x);
-      const h = Math.max(1, Math.floor(r.bottom - insetB) - y);
+      const x = Math.ceil(r.left);
+      const y = Math.ceil(r.top);
+      const w = Math.max(1, Math.floor(r.right) - x);
+      const h = Math.max(1, Math.floor(r.bottom) - y);
       const key = `${x},${y},${w},${h}`;
       if (key === lastRectRef.current) return "same";
       if (!force && liveRef.current) {
