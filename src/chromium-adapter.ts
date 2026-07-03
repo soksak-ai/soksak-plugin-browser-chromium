@@ -319,6 +319,13 @@ export function makeChromium(app: PluginApi): WebviewApi {
       await send(app, { type: "hidden", id, hidden: !visible });
     },
 
+    // 캡처는 창 합성(코어 능력)이라 엔진 무관 — 코어 webview 능력으로 위임("webview" 권한).
+    captureRegion: async (rect) => {
+      const core = app.webview;
+      if (!core?.captureRegion) throw new Error("코어 webview 캡처 능력 없음(webview 권한 필요)");
+      return core.captureRegion(rect);
+    },
+
     navigate: async (label, url) => {
       const id = idByLabel.get(label);
       if (id == null) return;

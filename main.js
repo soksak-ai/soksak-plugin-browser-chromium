@@ -13036,6 +13036,12 @@ function makeChromium(app) {
       if (id == null) return;
       await send(app, { type: "hidden", id, hidden: !visible });
     },
+    // 캡처는 창 합성(코어 능력)이라 엔진 무관 — 코어 webview 능력으로 위임("webview" 권한).
+    captureRegion: async (rect) => {
+      const core = app.webview;
+      if (!core?.captureRegion) throw new Error("\uCF54\uC5B4 webview \uCEA1\uCC98 \uB2A5\uB825 \uC5C6\uC74C(webview \uAD8C\uD55C \uD544\uC694)");
+      return core.captureRegion(rect);
+    },
     navigate: async (label, url) => {
       const id = idByLabel.get(label);
       if (id == null) return;
@@ -13378,6 +13384,7 @@ function isComposingEnter(e) {
 var LIVE_THROTTLE_MS = 32;
 var dtDividerDragActive = false;
 var STABLE_STOP_FRAMES = 4;
+var resizeGestureActive = false;
 function normalizeUrl2(input) {
   const s = input.trim();
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) return s;
@@ -13511,6 +13518,7 @@ function BrowserViewImpl({
   const openedRef = (0, import_react.useRef)(false);
   const lastRectRef = (0, import_react.useRef)("");
   const liveRef = (0, import_react.useRef)(false);
+  const [freeze, setFreeze] = (0, import_react.useState)(null);
   const lastSentRef = (0, import_react.useRef)(0);
   const lastVisibleRef = (0, import_react.useRef)(true);
   const [localUrl, setLocalUrl] = (0, import_react.useState)(initialUrl);
@@ -13550,6 +13558,7 @@ function BrowserViewImpl({
   }, [localUrl]);
   const syncBounds = (0, import_react.useCallback)(
     (force = false) => {
+      if (resizeGestureActive && !force) return "same";
       const el = areaRef.current;
       if (!el || !openedRef.current || !webview || !label) return "same";
       if (!lastVisibleRef.current) return "same";
@@ -13637,6 +13646,46 @@ function BrowserViewImpl({
       if (!active) syncBounds(true);
       arm();
     });
+    const offGesture = app.events.on("layout.resize-gesture", (p) => {
+      const active = !!p.active;
+      resizeGestureActive = active;
+      if (!lastVisibleRef.current) return;
+      const dtLabel = label ? `${label}#dt` : null;
+      if (active) {
+        const area = areaRef.current;
+        if (area && webview && label && openedRef.current) {
+          const r = area.getBoundingClientRect();
+          const rect = { x: r.left, y: r.top, w: r.width, h: r.height };
+          if (rect.w >= 1 && rect.h >= 1) {
+            void webview.captureRegion(rect).then(async (url) => {
+              if (!resizeGestureActive) return;
+              setFreeze({ url, w: rect.w, h: rect.h });
+              await webview.visible(label, false).catch(() => {
+              });
+              if (dtLabel) await webview.visible(dtLabel, false).catch(() => {
+              });
+            }).catch(() => {
+            });
+          }
+        }
+      } else {
+        syncBounds(true);
+        if (webview && label) {
+          void (async () => {
+            await webview.visible(label, true).catch(() => {
+            });
+            if (dtLabel) await webview.visible(dtLabel, true).catch(() => {
+            });
+            requestAnimationFrame(
+              () => requestAnimationFrame(() => setFreeze(null))
+            );
+          })();
+        } else {
+          setFreeze(null);
+        }
+        arm();
+      }
+    });
     arm();
     return () => {
       ro.disconnect();
@@ -13644,9 +13693,10 @@ function BrowserViewImpl({
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("pointermove", onPointerMove, true);
       offLive.dispose();
+      offGesture.dispose();
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [syncBounds, app]);
+  }, [syncBounds, app, webview, label]);
   const inlineSide = inlineDt?.side ?? null;
   (0, import_react.useEffect)(() => {
     if (!inlineSide) return;
@@ -13747,7 +13797,7 @@ function BrowserViewImpl({
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "browser-view" });
   }
   if (devtoolsTarget) {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "browser-view", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-area", ref: areaRef }) });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "browser-view", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-area", ref: areaRef, children: freeze && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-freeze", "data-node": "freeze", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: freeze.url, width: freeze.w, height: freeze.h, alt: "", draggable: false }) }) }) });
   }
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "browser-view", children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "bv-bar", children: [
@@ -13887,7 +13937,8 @@ function BrowserViewImpl({
         {
           className: "bv-area",
           ref: areaRef,
-          style: inlineDt ? { flex: `${inlineDt.ratio} 1 0px`, minWidth: 0 } : void 0
+          style: inlineDt ? { flex: `${inlineDt.ratio} 1 0px`, minWidth: 0 } : void 0,
+          children: freeze && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-freeze", "data-node": "freeze", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: freeze.url, width: freeze.w, height: freeze.h, alt: "", draggable: false }) })
         },
         "page"
       );
@@ -13941,6 +13992,7 @@ function InlineDevtools({
   const visibleRef = (0, import_react.useRef)(true);
   const sync = (0, import_react.useCallback)(
     (force = false) => {
+      if (resizeGestureActive && !force) return "same";
       const el = ref.current;
       if (!el || !openedRef.current || !visibleRef.current) return "same";
       const r = el.getBoundingClientRect();
@@ -14154,6 +14206,22 @@ var GLOBAL_CSS = `
   flex: 1 1 auto;
   min-height: 0;
   background: transparent;
+  position: relative;
+}
+/* freeze-frame: \uB514\uBC14\uC774\uB354 \uB4DC\uB798\uADF8 \uB3D9\uC548\uC758 \uC2DC\uAC01 \uC5F0\uC18D \uC2A4\uD0E0\uB4DC\uC778(\uC131\uB2A5 \uD5CC\uBC95 5a). \uCEE8\uD14C\uC774\uB108\uB294 \uBD88\uD22C\uBA85
+   \uBC30\uACBD \u2014 \uC2AC\uB86F\uC774 \uC790\uB77C\uBA70 \uC0C8\uB85C \uB178\uCD9C\uB418\uB294 \uC601\uC5ED\uC744 \uAC00\uB9B0\uB2E4. \uC774\uBBF8\uC9C0\uB294 top-left \uC575\uCEE4\xB7\uBB34\uC2A4\uCF00\uC77C.
+   CEF surface(DOM \uC704)\uB294 \uC2A4\uD0E0\uB4DC\uC778 \uB9C8\uC6B4\uD2B8 \uD6C4 \uC228\uACA8\uC9C0\uACE0, \uB4DC\uB798\uADF8 \uB05D \uBCF5\uC6D0 \uD6C4 \uC2A4\uD0E0\uB4DC\uC778\uC774 \uAC77\uD78C\uB2E4. */
+.bv-freeze {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg, #1e1e1e);
+  z-index: 3;
+}
+.bv-freeze > img {
+  display: block;
+  user-select: none;
+  pointer-events: none;
 }
 /* inline DevTools(\uAC19\uC740 \uD0ED \uB0B4\uBD80 \uBD84\uD560) \u2014 \uD398\uC774\uC9C0/DevTools \uB450 \uD640 \uC0AC\uC774\uC758 \uB9AC\uC0AC\uC774\uC988 divider.
    6px DOM \uB760\uB294 \uC5B4\uB290 child rect \uC5D0\uB3C4 \uC548 \uB36E\uC5EC(\uB450 \uD640 \uC0AC\uC774 \uAC2D) \uB9C8\uC6B0\uC2A4\uB97C \uC9C1\uC811 \uBC1B\uB294\uB2E4. */
