@@ -12805,6 +12805,31 @@ function persist() {
   }
 }
 var idByLabel = loadPersisted();
+var DT_KEY = "soksak-plugin-browser-chromium:devtools";
+function loadDevtoolsMarks() {
+  try {
+    const raw = sessionStorage.getItem(DT_KEY);
+    if (!raw) return /* @__PURE__ */ new Map();
+    return new Map(Object.entries(JSON.parse(raw)));
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
+}
+var devtoolsByLabel = loadDevtoolsMarks();
+function persistDevtools() {
+  try {
+    sessionStorage.setItem(DT_KEY, JSON.stringify(Object.fromEntries(devtoolsByLabel)));
+  } catch {
+  }
+}
+function devtoolsMarkOf(label) {
+  return devtoolsByLabel.get(label) ?? null;
+}
+function devtoolsLabelFor(inspectedLabel) {
+  for (const [l, insp] of devtoolsByLabel)
+    if (insp === inspectedLabel && idByLabel.has(l)) return l;
+  return null;
+}
 var unclaimed = new Set(idByLabel.keys());
 var sweepScheduled = idByLabel.size > 0;
 function scheduleOrphanSweep(app) {
@@ -12814,6 +12839,7 @@ function scheduleOrphanSweep(app) {
     for (const label of unclaimed) {
       const id = idByLabel.get(label);
       idByLabel.delete(label);
+      devtoolsByLabel.delete(label);
       if (id != null) {
         console.warn(`[browser-chromium] \uBBF8\uC785\uC591 child \uD68C\uC218: ${label} (id=${id})`);
         void send(app, { type: "close", id });
@@ -12821,6 +12847,7 @@ function scheduleOrphanSweep(app) {
     }
     unclaimed.clear();
     persist();
+    persistDevtools();
   }, ADOPT_GRACE_MS);
 }
 var pendingClose = /* @__PURE__ */ new Map();
@@ -12846,6 +12873,10 @@ async function send(app, msg) {
     console.warn("[browser-chromium] send \uC2E4\uD328:", e);
     return null;
   }
+}
+async function engineStats(app) {
+  const out = await send(app, { type: "stats" });
+  return out && Array.isArray(out.ids) ? out.ids : [];
 }
 function makeChromium(app) {
   scheduleOrphanSweep(app);
@@ -12894,7 +12925,9 @@ function makeChromium(app) {
         const id2 = out2 && typeof out2.id === "number" ? out2.id : null;
         if (id2 != null) {
           idByLabel.set(label, id2);
+          devtoolsByLabel.set(label, o.devtoolsOf);
           persist();
+          persistDevtools();
         }
         return;
       }
@@ -12956,7 +12989,9 @@ function makeChromium(app) {
             return;
           }
           idByLabel.delete(label);
+          devtoolsByLabel.delete(label);
           persist();
+          persistDevtools();
           void send(app, { type: "close", id });
         })();
       }, CLOSE_DEBOUNCE_MS);
@@ -13019,6 +13054,28 @@ function takePendingDevtools() {
   pendingDevtoolsLabel = null;
   return l;
 }
+async function openDevtoolsTab(app, inspectedLabel) {
+  const existing = devtoolsLabelFor(inspectedLabel);
+  if (existing) {
+    const viewId = existing.slice("chromium-".length);
+    const out2 = await app.commands?.execute("view.activate", { view: viewId }).catch(() => null);
+    if (out2 && out2.ok) return { ok: true, focused: true };
+  }
+  const active = await app.commands?.execute("view.list", {}).catch(() => null);
+  const grp = active && typeof active.groupId === "string" ? active.groupId : null;
+  setPendingDevtools(inspectedLabel);
+  const out = await app.commands?.execute("view.open", { program: "browser-chromium" }).catch(() => null);
+  if (!out || !out.ok) {
+    takePendingDevtools();
+    return { ok: false, error: "view.open failed" };
+  }
+  const dtViewId = typeof out.viewId === "string" ? out.viewId : null;
+  if (dtViewId && grp) {
+    await app.commands?.execute("view.move", { view: dtViewId, dst: grp, zone: "right" }).catch(() => {
+    });
+  }
+  return { ok: true };
+}
 var activeViews = /* @__PURE__ */ new Map();
 var lastMountedViewId = null;
 var activeViewId = null;
@@ -13072,6 +13129,10 @@ function registerCommands(ctx) {
   const reg = (name, spec) => {
     ctx.subscriptions.push(app.commands.register(name, spec));
   };
+  reg("stats", {
+    description: "Live engine-side browser child ids (E2E/diagnostics \u2014 verifies close really destroyed the child).",
+    handler: async () => ({ ok: true, ids: await engineStats(app) })
+  });
   reg("ping", {
     description: "Load/version check \u2014 returns the plugin id and engine (E2E).",
     handler: () => ({ ok: true, plugin: app.pluginId, engine: "chromium" })
@@ -13121,19 +13182,13 @@ function registerCommands(ctx) {
     }
   });
   reg("devtools", {
-    description: "Open Chrome DevTools for the active browser view as a new tab (splittable/movable like any view).",
+    description: "Open Chrome DevTools for the active browser view as a new tab (splittable/movable like any view). Focuses the existing DevTools tab if one is already open for that view.",
     triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uC778\uC2A4\uD399\uD130 devtools \uC5F4\uAE30" },
     params: targetParam,
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
       if (!e) return { ok: false, error: "no active browser view" };
-      setPendingDevtools(e.label);
-      const out = await app.commands.execute("view.open", { program: "browser-chromium" }).catch(() => null);
-      if (!out || !out.ok) {
-        takePendingDevtools();
-        return { ok: false, error: "view.open failed" };
-      }
-      return { ok: true };
+      return openDevtoolsTab(app, e.label);
     }
   });
   reg("open", {
@@ -13206,6 +13261,7 @@ function BrowserViewImpl({
   const lang = app.locale();
   const webview = (0, import_react.useMemo)(() => makeChromium(app), [app]);
   const label = ctx.viewId && webview ? webview.label(ctx.viewId) : null;
+  const devtoolsTarget = devtoolsOf ?? (label ? devtoolsMarkOf(label) : null);
   const areaRef = (0, import_react.useRef)(null);
   const openedRef = (0, import_react.useRef)(false);
   const lastRectRef = (0, import_react.useRef)("");
@@ -13281,7 +13337,7 @@ function BrowserViewImpl({
       y: r.top,
       w: Math.max(1, r.width),
       h: Math.max(1, r.height),
-      devtoolsOf: devtoolsOf ?? void 0
+      devtoolsOf: devtoolsTarget ?? void 0
     }).then(() => {
       if (closed) {
         void webview.close(label).catch(() => {
@@ -13433,7 +13489,7 @@ function BrowserViewImpl({
   if (!label || !webview) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "browser-view" });
   }
-  if (devtoolsOf) {
+  if (devtoolsTarget) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "browser-view", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-area", ref: areaRef }) });
   }
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "browser-view", children: [
@@ -13505,9 +13561,7 @@ function BrowserViewImpl({
           title: t("inspect", lang),
           "data-node": "devtools",
           onClick: () => {
-            setPendingDevtools(label);
-            void app.commands?.execute("view.open", { program: "browser-chromium" }).catch(() => {
-            });
+            void openDevtoolsTab(app, label);
           },
           children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconTerminal, {})
         }

@@ -42,6 +42,12 @@ export async function openDevtoolsTab(
     if (out && out.ok) return { ok: true, focused: true };
     // 활성화 실패(뷰가 방금 닫힘 등) — 새로 여는 경로로 진행.
   }
+  // DevTools 는 검사 대상이 화면에 보여야(visible) 동작한다 — 탭 전환식으로 열면 대상 브라우저가
+  // 비활성=숨김이 되어 DevTools 가 "tab is inactive"(렌더 정지)를 띄운다. 그래서 대상이 있는 그룹
+  // "옆에 나란히 분할"로 연다(둘 다 visible = Chrome docked 동형). 여전히 정식 뷰라 드래그로 합치기/
+  // 재배치 가능. 열기 직전 활성 그룹 = 대상 브라우저 그룹(버튼/커맨드가 그 뷰를 대상으로 하므로).
+  const active = await app.commands?.execute("view.list", {}).catch(() => null);
+  const grp = active && typeof active.groupId === "string" ? active.groupId : null;
   setPendingDevtools(inspectedLabel);
   const out = await app.commands
     ?.execute("view.open", { program: "browser-chromium" })
@@ -49,6 +55,13 @@ export async function openDevtoolsTab(
   if (!out || !out.ok) {
     takePendingDevtools();
     return { ok: false, error: "view.open failed" };
+  }
+  const dtViewId = typeof out.viewId === "string" ? out.viewId : null;
+  if (dtViewId && grp) {
+    // 대상 옆(오른쪽)으로 분할. 실패해도(단일 뷰 등) 탭으로는 열려 있으니 무해.
+    await app.commands
+      ?.execute("view.move", { view: dtViewId, dst: grp, zone: "right" })
+      .catch(() => {});
   }
   return { ok: true };
 }
