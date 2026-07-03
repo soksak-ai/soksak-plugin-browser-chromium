@@ -2,7 +2,13 @@
 // 와 1:1(declared≡actual). CLI/MCP 자동 노출. 엔진 조작은 Chromium 어댑터(app.sidecar 채널)
 // 경유 — 코어 비결합. eval/dom/media 는 엔진 v1 미지원이라 제공하지 않는다(후속: CDP).
 import type { PluginApi, PluginContext } from "./host";
-import { makeChromium, devtoolsLabelFor, engineStats } from "./chromium-adapter";
+import {
+  makeChromium,
+  devtoolsLabelFor,
+  engineStats,
+  devtoolsMapSnapshot,
+  idMapSnapshot,
+} from "./chromium-adapter";
 
 // 새 브라우저 탭을 열 때 mount 가 homeUrl 대신 소비할 "대기 URL".
 let pendingOpenUrl: string | null = null;
@@ -15,16 +21,21 @@ export function takePendingUrl(): string | null {
   return u;
 }
 
-// DevTools 를 새 탭으로 열 때, 그 새 뷰가 마운트되며 "어느 브라우저를 검사할지"(inspected label)를
-// 이어받는 대기값. pendingUrl 과 같은 1회 소비 패턴 — view.open 직전 set, 새 뷰 mount 가 take.
-let pendingDevtoolsLabel: string | null = null;
-export function setPendingDevtools(inspectedLabel: string): void {
-  pendingDevtoolsLabel = inspectedLabel;
+// DevTools 를 새 탭으로 열 때, 그 새 뷰가 마운트되며 "어느 브라우저를 검사할지"(inspected label)와
+// screencast 오버라이드를 이어받는 대기값. pendingUrl 과 같은 1회 소비 패턴 — view.open 직전 set,
+// 새 뷰 mount 가 take. screencast 생략 = 플러그인 설정(devtoolsScreencast)을 따른다.
+export interface PendingDevtools {
+  label: string;
+  screencast?: boolean;
 }
-export function takePendingDevtools(): string | null {
-  const l = pendingDevtoolsLabel;
-  pendingDevtoolsLabel = null;
-  return l;
+let pendingDevtools: PendingDevtools | null = null;
+export function setPendingDevtools(inspectedLabel: string, screencast?: boolean): void {
+  pendingDevtools = { label: inspectedLabel, screencast };
+}
+export function takePendingDevtools(): PendingDevtools | null {
+  const p = pendingDevtools;
+  pendingDevtools = null;
+  return p;
 }
 
 // DevTools 탭 열기의 단일 경로(커맨드 핸들러 + 툴바 버튼 공용). 같은 inspected 의 DevTools 탭이 이미
@@ -32,6 +43,7 @@ export function takePendingDevtools(): string | null {
 export async function openDevtoolsTab(
   app: PluginApi,
   inspectedLabel: string,
+  screencast?: boolean,
 ): Promise<{ ok: boolean; focused?: boolean; error?: string }> {
   const existing = devtoolsLabelFor(inspectedLabel);
   if (existing) {
@@ -48,7 +60,7 @@ export async function openDevtoolsTab(
   // 재배치 가능. 열기 직전 활성 그룹 = 대상 브라우저 그룹(버튼/커맨드가 그 뷰를 대상으로 하므로).
   const active = await app.commands?.execute("view.list", {}).catch(() => null);
   const grp = active && typeof active.groupId === "string" ? active.groupId : null;
-  setPendingDevtools(inspectedLabel);
+  setPendingDevtools(inspectedLabel, screencast);
   const out = await app.commands
     ?.execute("view.open", { program: "browser-chromium" })
     .catch(() => null);
@@ -133,8 +145,13 @@ export function registerCommands(ctx: PluginContext): void {
   };
 
   reg("stats", {
-    description: "Live engine-side browser child ids (E2E/diagnostics — verifies close really destroyed the child).",
-    handler: async () => ({ ok: true, ids: await engineStats(app) }),
+    description: "Live engine-side browser child ids + label/devtools mappings (E2E/diagnostics — verifies close really destroyed the child).",
+    handler: async () => ({
+      ok: true,
+      ids: await engineStats(app),
+      idMap: idMapSnapshot(),
+      devtoolsMap: devtoolsMapSnapshot(),
+    }),
   });
 
   reg("ping", {
@@ -193,13 +210,20 @@ export function registerCommands(ctx: PluginContext): void {
   reg("devtools", {
     description: "Open Chrome DevTools for the active browser view as a new tab (splittable/movable like any view). Focuses the existing DevTools tab if one is already open for that view.",
     triggers: { ko: "개발자 도구 인스펙터 devtools 열기" },
-    params: targetParam,
+    params: {
+      ...targetParam,
+      screencast: {
+        type: "boolean",
+        description: "Show the page preview (screencast) panel inside DevTools. Omit to follow the devtoolsScreencast plugin setting.",
+        required: false,
+      },
+    },
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
       if (!e) return { ok: false, error: "no active browser view" };
       // DevTools 도 일반 브라우저 뷰다 — 새 뷰가 마운트되며 inspected(e.label)의 DevTools 프론트엔드를
       // 연다. 이후 분할/이동/닫기는 코어 view 커맨드(드래그와 동일 경로)로 동일하게 제어된다.
-      return openDevtoolsTab(app, e.label);
+      return openDevtoolsTab(app, e.label, typeof p.screencast === "boolean" ? p.screencast : undefined);
     },
   });
 

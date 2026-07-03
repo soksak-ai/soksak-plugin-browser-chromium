@@ -42,7 +42,7 @@ export default {
           mount(container: HTMLElement, vctx: PluginViewContext) {
             // DevTools 탭이면 이 값이 inspected label(=검사 대상 브라우저의 label)이다 → URL 대신
             // 그 브라우저의 DevTools 를 임베드한다. 둘 다 1회 소비(다음 mount 오이어받기 방지).
-            const devtoolsOf = takePendingDevtools();
+            const devtools = takePendingDevtools();
             // 시작 URL 우선순위: 대기 URL(open 명령 / open-external 새 탭이 set) → homeUrl 설정 → blank.
             const pending = takePendingUrl();
             const homeUrl =
@@ -51,7 +51,13 @@ export default {
               "about:blank";
             mountInto(
               container,
-              <BrowserView app={app} ctx={vctx} initialUrl={homeUrl} devtoolsOf={devtoolsOf} />,
+              <BrowserView
+                app={app}
+                ctx={vctx}
+                initialUrl={homeUrl}
+                devtoolsOf={devtools?.label ?? null}
+                devtoolsScreencast={devtools?.screencast}
+              />,
             );
           },
           unmount(container: HTMLElement) {
