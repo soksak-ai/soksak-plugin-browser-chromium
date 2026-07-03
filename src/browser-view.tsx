@@ -101,12 +101,15 @@ function BrowserViewImpl({
   ctx,
   initialUrl,
   devtoolsOf,
+  devtoolsScreencast,
 }: {
   app: PluginApi;
   ctx: PluginViewContext;
   initialUrl: string;
   // 설정 시 이 뷰는 URL 브라우저가 아니라 devtoolsOf(inspected label) 브라우저의 DevTools 임베드 탭이다.
   devtoolsOf?: string | null;
+  // DevTools screencast(페이지 미리보기) 오버라이드 — 생략 시 설정 devtoolsScreencast 를 따른다.
+  devtoolsScreencast?: boolean;
 }) {
   const lang = app.locale();
   // 엔진 = 번들 Chromium(엔진 사이드카). app.webview(OS 웹뷰) 대신 app.sidecar 채널
@@ -222,6 +225,7 @@ function BrowserViewImpl({
         w: Math.max(1, r.width),
         h: Math.max(1, r.height),
         devtoolsOf: devtoolsTarget ?? undefined,
+        devtoolsScreencast,
       })
       .then(() => {
         if (closed) {

@@ -12830,6 +12830,12 @@ function devtoolsLabelFor(inspectedLabel) {
     if (insp === inspectedLabel && idByLabel.has(l)) return l;
   return null;
 }
+function devtoolsMapSnapshot() {
+  return Object.fromEntries(devtoolsByLabel);
+}
+function idMapSnapshot() {
+  return Object.fromEntries(idByLabel);
+}
 var unclaimed = new Set(idByLabel.keys());
 var sweepScheduled = idByLabel.size > 0;
 function scheduleOrphanSweep(app) {
@@ -12852,6 +12858,20 @@ function scheduleOrphanSweep(app) {
 }
 var pendingClose = /* @__PURE__ */ new Map();
 var CLOSE_DEBOUNCE_MS = 600;
+async function viewExistsAnywhere(app, viewId) {
+  const cl = await app.commands?.execute("content.list", {}).catch(() => null);
+  const contents = (cl && cl.contents || []).map((c) => c.id);
+  for (const content of contents.length ? contents : [void 0]) {
+    const pl = await app.commands?.execute("panel.list", content ? { content } : {}).catch(() => null);
+    const groups = (pl && pl.panels || []).map((g) => g.id);
+    for (const g of groups) {
+      const r = await app.commands?.execute("view.list", { group: g }).catch(() => null);
+      const views = r && r.views || null;
+      if (views && views.some((v) => v.id === viewId)) return true;
+    }
+  }
+  return false;
+}
 var noop = { dispose() {
 } };
 var handleP = null;
@@ -12914,9 +12934,11 @@ function makeChromium(app) {
           console.warn(`[browser-chromium] devtools \uB300\uC0C1 \uBBF8\uC874\uC7AC: ${o.devtoolsOf}`);
           return;
         }
+        const screencast = o.devtoolsScreencast ?? app.settings?.get("devtoolsScreencast") === true;
         const out2 = await send(app, {
           type: "devtools-open",
           inspectedId,
+          screencast,
           x: Math.round(o.x),
           y: Math.round(o.y),
           w: Math.max(1, Math.round(o.w)),
@@ -12980,9 +13002,8 @@ function makeChromium(app) {
       if (pendingClose.has(label)) return;
       {
         const viewId = label.slice("chromium-".length);
-        void app.commands?.execute("view.list", {}).then((out) => {
-          const views = out && out.views || null;
-          if (views && !views.some((v) => v.id === viewId) && pendingClose.has(label)) {
+        void viewExistsAnywhere(app, viewId).then((exists) => {
+          if (!exists && pendingClose.has(label)) {
             void send(app, { type: "hidden", id, hidden: true });
           }
         }).catch(() => {
@@ -12992,9 +13013,7 @@ function makeChromium(app) {
         void (async () => {
           pendingClose.delete(label);
           const viewId = label.slice("chromium-".length);
-          const out = await app.commands?.execute("view.list", {}).catch(() => null);
-          const views = out && out.views || null;
-          if (views && views.some((v) => v.id === viewId)) {
+          if (await viewExistsAnywhere(app, viewId)) {
             void send(app, { type: "hidden", id, hidden: true });
             return;
           }
@@ -13003,6 +13022,13 @@ function makeChromium(app) {
           persist();
           persistDevtools();
           void send(app, { type: "close", id });
+          for (const [dtLabel, inspected] of devtoolsByLabel) {
+            if (inspected === label) {
+              const dtViewId = dtLabel.slice("chromium-".length);
+              void app.commands?.execute("view.close", { view: dtViewId }).catch(() => {
+              });
+            }
+          }
         })();
       }, CLOSE_DEBOUNCE_MS);
       pendingClose.set(label, t2);
@@ -13055,16 +13081,16 @@ function takePendingUrl() {
   pendingOpenUrl = null;
   return u;
 }
-var pendingDevtoolsLabel = null;
-function setPendingDevtools(inspectedLabel) {
-  pendingDevtoolsLabel = inspectedLabel;
+var pendingDevtools = null;
+function setPendingDevtools(inspectedLabel, screencast) {
+  pendingDevtools = { label: inspectedLabel, screencast };
 }
 function takePendingDevtools() {
-  const l = pendingDevtoolsLabel;
-  pendingDevtoolsLabel = null;
-  return l;
+  const p = pendingDevtools;
+  pendingDevtools = null;
+  return p;
 }
-async function openDevtoolsTab(app, inspectedLabel) {
+async function openDevtoolsTab(app, inspectedLabel, screencast) {
   const existing = devtoolsLabelFor(inspectedLabel);
   if (existing) {
     const viewId = existing.slice("chromium-".length);
@@ -13073,7 +13099,7 @@ async function openDevtoolsTab(app, inspectedLabel) {
   }
   const active = await app.commands?.execute("view.list", {}).catch(() => null);
   const grp = active && typeof active.groupId === "string" ? active.groupId : null;
-  setPendingDevtools(inspectedLabel);
+  setPendingDevtools(inspectedLabel, screencast);
   const out = await app.commands?.execute("view.open", { program: "browser-chromium" }).catch(() => null);
   if (!out || !out.ok) {
     takePendingDevtools();
@@ -13140,8 +13166,13 @@ function registerCommands(ctx) {
     ctx.subscriptions.push(app.commands.register(name, spec));
   };
   reg("stats", {
-    description: "Live engine-side browser child ids (E2E/diagnostics \u2014 verifies close really destroyed the child).",
-    handler: async () => ({ ok: true, ids: await engineStats(app) })
+    description: "Live engine-side browser child ids + label/devtools mappings (E2E/diagnostics \u2014 verifies close really destroyed the child).",
+    handler: async () => ({
+      ok: true,
+      ids: await engineStats(app),
+      idMap: idMapSnapshot(),
+      devtoolsMap: devtoolsMapSnapshot()
+    })
   });
   reg("ping", {
     description: "Load/version check \u2014 returns the plugin id and engine (E2E).",
@@ -13194,11 +13225,18 @@ function registerCommands(ctx) {
   reg("devtools", {
     description: "Open Chrome DevTools for the active browser view as a new tab (splittable/movable like any view). Focuses the existing DevTools tab if one is already open for that view.",
     triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uC778\uC2A4\uD399\uD130 devtools \uC5F4\uAE30" },
-    params: targetParam,
+    params: {
+      ...targetParam,
+      screencast: {
+        type: "boolean",
+        description: "Show the page preview (screencast) panel inside DevTools. Omit to follow the devtoolsScreencast plugin setting.",
+        required: false
+      }
+    },
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
       if (!e) return { ok: false, error: "no active browser view" };
-      return openDevtoolsTab(app, e.label);
+      return openDevtoolsTab(app, e.label, typeof p.screencast === "boolean" ? p.screencast : void 0);
     }
   });
   reg("open", {
@@ -13266,7 +13304,8 @@ function BrowserViewImpl({
   app,
   ctx,
   initialUrl,
-  devtoolsOf
+  devtoolsOf,
+  devtoolsScreencast
 }) {
   const lang = app.locale();
   const webview = (0, import_react.useMemo)(() => makeChromium(app), [app]);
@@ -13347,7 +13386,8 @@ function BrowserViewImpl({
       y: r.top,
       w: Math.max(1, r.width),
       h: Math.max(1, r.height),
-      devtoolsOf: devtoolsTarget ?? void 0
+      devtoolsOf: devtoolsTarget ?? void 0,
+      devtoolsScreencast
     }).then(() => {
       if (closed) {
         void webview.close(label).catch(() => {
@@ -13772,12 +13812,21 @@ var plugin_entry_default = {
       ctx.subscriptions.push(
         app.ui.registerView("content", {
           mount(container, vctx) {
-            const devtoolsOf = takePendingDevtools();
+            const devtools = takePendingDevtools();
             const pending = takePendingUrl();
             const homeUrl = pending ?? app.settings.get("homeUrl") ?? "about:blank";
             mountInto(
               container,
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(BrowserView, { app, ctx: vctx, initialUrl: homeUrl, devtoolsOf })
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                BrowserView,
+                {
+                  app,
+                  ctx: vctx,
+                  initialUrl: homeUrl,
+                  devtoolsOf: devtools?.label ?? null,
+                  devtoolsScreencast: devtools?.screencast
+                }
+              )
             );
           },
           unmount(container) {

@@ -215,7 +215,20 @@ async function main() {
     `재요청 = 기존 devtools 탭 활성화(중복 0) → ${JSON.stringify({ ok: dedup?.ok, focused: dedup?.focused })}`,
   );
 
-  // 7) 자가정리(테스트 소유 뷰만) + 테스트 child 전멸 확인
+  // 7) 검사 대상 닫힘 → DevTools 동반 닫힘(Chrome 동형). 대상 없는 DevTools 는 ws 가 끊긴
+  //    "Debugging connection was closed" 잔해가 되므로, 대상 파괴 확정 시 함께 닫는다.
+  await rpc("view.close", { view: browserViewId });
+  myViews.delete(browserViewId);
+  await sleep(2500); // 디바운스(600)+동반 닫힘 전파+그 devtools 자체 디바운스 여유
+  // 내 소유 devtools 뷰(dtId2)가 사라졌는지만 본다 — 화면에 남은 남의 DevTools 탭은 검사 밖.
+  const after7 = await allViews();
+  ok(
+    !after7.some((v) => v.id === dtId2),
+    "검사 대상 닫힘 → 그 DevTools 탭 동반 닫힘(잔해 0)",
+  );
+  myViews.delete(dtId2); // 동반 닫힘됨 — cleanup 중복 close 방지
+
+  // 8) 자가정리(테스트 소유 뷰만) + 테스트 child 전멸 확인
   const mine = [browserChild[0], dtChild2[0]].filter((x) => x != null);
   await cleanup();
   const fin = await stats();

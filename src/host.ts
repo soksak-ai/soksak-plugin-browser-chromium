@@ -47,10 +47,19 @@ export interface WebviewApi {
   /** viewId → 전역 유일 label(창 네임스페이스). webviewLabels 단일 진실. */
   label: (viewId: string) => string;
   /** child webview 생성 + 슬롯 rect 에 임베드. 이미 있으면 no-op.
-   *  devtoolsOf(inspected label) 지정 시 URL 브라우저 대신 그 브라우저의 DevTools 를 임베드 child 로 연다. */
+   *  devtoolsOf(inspected label) 지정 시 URL 브라우저 대신 그 브라우저의 DevTools 를 임베드 child 로 연다.
+   *  devtoolsScreencast: DevTools 페이지 미리보기 패널(생략 시 설정 devtoolsScreencast 를 따른다). */
   open: (
     label: string,
-    o: { url: string; x: number; y: number; w: number; h: number; devtoolsOf?: string },
+    o: {
+      url: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      devtoolsOf?: string;
+      devtoolsScreencast?: boolean;
+    },
   ) => Promise<void>;
   /** 슬롯 rect 동기화(분할/리사이즈 — 프레임당 1회 권장). */
   bounds: (label: string, x: number, y: number, w: number, h: number) => Promise<void>;

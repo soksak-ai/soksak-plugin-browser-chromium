@@ -64,6 +64,14 @@ export function devtoolsLabelFor(inspectedLabel: string): string | null {
     if (insp === inspectedLabel && idByLabel.has(l)) return l;
   return null;
 }
+/** 진단: devtools label → inspected label 매핑 스냅샷(stats 커맨드 노출 — E2E/디버깅). */
+export function devtoolsMapSnapshot(): Record<string, string> {
+  return Object.fromEntries(devtoolsByLabel);
+}
+/** 진단: label → 엔진 child id 매핑 스냅샷. */
+export function idMapSnapshot(): Record<string, number> {
+  return Object.fromEntries(idByLabel);
+}
 
 // 이전 JS 인스턴스에서 넘어온 미입양 label — open() 이 입양하면 제거, grace 후 잔여는 회수.
 const unclaimed = new Set<string>(idByLabel.keys());
@@ -92,6 +100,27 @@ function scheduleOrphanSweep(app: PluginApi): void {
 // 기존 child 를 재사용해 페이지를 보존한다(안 그러면 매번 about:blank 로 재생성 = 흰 화면 churn).
 const pendingClose = new Map<string, ReturnType<typeof setTimeout>>();
 const CLOSE_DEBOUNCE_MS = 600;
+
+// 뷰가 워크스페이스 어딘가(활성 프로젝트의 모든 content×그룹)에 존재하는가 — 닫힘 판정의 단일 진실.
+// bare view.list(활성 그룹만)로 판정하면 비활성 그룹/다른 content 의 뷰를 "닫힘"으로 오판해 이동 중
+// child 를 파괴한다(페이지 소실·devtools 동반닫힘 오발/불발 — 실측 flake). 비활성 프로젝트 축은 스캔
+// 밖(프로젝트 전환은 언마운트-파킹 경로라 close 판정에 안 옴).
+async function viewExistsAnywhere(app: PluginApi, viewId: string): Promise<boolean> {
+  const cl = await app.commands?.execute("content.list", {}).catch(() => null);
+  const contents = ((cl && (cl.contents as { id: string }[] | undefined)) || []).map((c) => c.id);
+  for (const content of contents.length ? contents : [undefined]) {
+    const pl = await app.commands
+      ?.execute("panel.list", content ? { content } : {})
+      .catch(() => null);
+    const groups = ((pl && (pl.panels as { id: string }[] | undefined)) || []).map((g) => g.id);
+    for (const g of groups) {
+      const r = await app.commands?.execute("view.list", { group: g }).catch(() => null);
+      const views = (r && (r.views as { id: string }[] | undefined)) || null;
+      if (views && views.some((v) => v.id === viewId)) return true;
+    }
+  }
+  return false;
+}
 
 const noop: Disposable = { dispose() {} };
 
@@ -173,9 +202,14 @@ export function makeChromium(app: PluginApi): WebviewApi {
           console.warn(`[browser-chromium] devtools 대상 미존재: ${o.devtoolsOf}`);
           return;
         }
+        // screencast(페이지 미리보기 패널): 명시 오버라이드 > 플러그인 설정. 프로필이 in-memory 라
+        // DevTools 자체 토글은 세션마다 증발 — 이 값이 정본(엔진이 로드 후 localStorage 에 강제).
+        const screencast =
+          o.devtoolsScreencast ?? app.settings?.get("devtoolsScreencast") === true;
         const out = await send(app, {
           type: "devtools-open",
           inspectedId,
+          screencast,
           x: Math.round(o.x),
           y: Math.round(o.y),
           w: Math.max(1, Math.round(o.w)),
@@ -249,11 +283,9 @@ export function makeChromium(app: PluginApi): WebviewApi {
       // 이동(unmount→remount)이면 뷰가 아직 목록에 있어 숨기지 않는다(이동 중 깜빡임 방지).
       {
         const viewId = label.slice("chromium-".length);
-        void app.commands
-          ?.execute("view.list", {})
-          .then((out) => {
-            const views = (out && (out.views as { id: string }[] | undefined)) || null;
-            if (views && !views.some((v) => v.id === viewId) && pendingClose.has(label)) {
+        void viewExistsAnywhere(app, viewId)
+          .then((exists) => {
+            if (!exists && pendingClose.has(label)) {
               void send(app, { type: "hidden", id, hidden: true });
             }
           })
@@ -265,12 +297,10 @@ export function makeChromium(app: PluginApi): WebviewApi {
       const t = setTimeout(() => {
         void (async () => {
           pendingClose.delete(label);
-          // 단발 판정(폴링 아님 — 파괴 결정 시점 1회): 뷰가 아직 워크스페이스에 있으면
+          // 단발 판정(폴링 아님 — 파괴 결정 시점 1회): 뷰가 아직 워크스페이스 어딘가에 있으면
           // 이동/비활성 탭 파킹 — child 보존(숨김만, 활성화 시 open 이 표시 복원).
           const viewId = label.slice("chromium-".length);
-          const out = await app.commands?.execute("view.list", {}).catch(() => null);
-          const views = (out && (out.views as { id: string }[] | undefined)) || null;
-          if (views && views.some((v) => v.id === viewId)) {
+          if (await viewExistsAnywhere(app, viewId)) {
             void send(app, { type: "hidden", id, hidden: true });
             return; // 매핑 유지 — 재마운트가 입양
           }
@@ -279,6 +309,14 @@ export function makeChromium(app: PluginApi): WebviewApi {
           persist();
           persistDevtools();
           void send(app, { type: "close", id });
+          // 검사 대상이 진짜 닫힘 — 그 DevTools 탭도 함께 닫는다(Chrome 동형). 대상 없는 DevTools 는
+          // ws 가 끊겨 "Debugging connection was closed" 잔해가 되고 재접속도 불가(타깃 소멸).
+          for (const [dtLabel, inspected] of devtoolsByLabel) {
+            if (inspected === label) {
+              const dtViewId = dtLabel.slice("chromium-".length);
+              void app.commands?.execute("view.close", { view: dtViewId }).catch(() => {});
+            }
+          }
         })();
       }, CLOSE_DEBOUNCE_MS);
       pendingClose.set(label, t);

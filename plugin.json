@@ -17,7 +17,8 @@
     "commands",
     "programs",
     "data",
-    "sidecar"
+    "sidecar",
+    "commands:destructive"
   ],
   "sidecars": [
     {
@@ -74,6 +75,19 @@
       "description": {
         "ko": "target=_blank / window.open 새 링크를 새 탭(앱 내 브라우저 뷰)으로 연다.",
         "en": "Open target=_blank / window.open links as a new tab (in-app browser view)."
+      }
+    },
+    {
+      "key": "devtoolsScreencast",
+      "type": "boolean",
+      "default": false,
+      "title": {
+        "ko": "DevTools 화면 미리보기",
+        "en": "DevTools screencast"
+      },
+      "description": {
+        "ko": "DevTools 안에 검사 중인 페이지의 미리보기(screencast) 패널을 보여준다. 페이지가 옆 탭에 이미 보이므로 기본은 끔.",
+        "en": "Show the inspected page's preview (screencast) panel inside DevTools. Off by default since the page is already visible in its own tab."
       }
     }
   ],
