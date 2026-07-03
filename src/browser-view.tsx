@@ -9,8 +9,8 @@
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type { PluginApi, PluginViewContext } from "./host";
 import { t } from "./i18n";
-import { makeChromium } from "./chromium-adapter";
-import { registerLabel, unregisterLabel, setPendingUrl, takePendingUrl, setPendingDevtools } from "./commands";
+import { makeChromium, devtoolsMarkOf } from "./chromium-adapter";
+import { registerLabel, unregisterLabel, setPendingUrl, takePendingUrl, openDevtoolsTab } from "./commands";
 
 // ── IME 조합 중 Enter 무시 (코어 imeKeys.ts 이식) ────────────────────────────
 function isComposingEnter(
@@ -117,6 +117,10 @@ function BrowserViewImpl({
   // ctx.viewId 없는 배치(사이드바)에서는 웹뷰를 열지 않는다.
   const label = ctx.viewId && webview ? webview.label(ctx.viewId) : null;
 
+  // DevTools 정체성 — 최초 마운트는 pending(prop), 재마운트(드래그 분할/이동·window.reload)는
+  // 어댑터의 영속 마커에서 복원한다. 드래그 이동 = unmount→remount 라 prop 만으로는 소실됨.
+  const devtoolsTarget = devtoolsOf ?? (label ? devtoolsMarkOf(label) : null);
+
   const areaRef = useRef<HTMLDivElement>(null);
   const openedRef = useRef(false);
   const lastRectRef = useRef("");
@@ -217,7 +221,7 @@ function BrowserViewImpl({
         y: r.top,
         w: Math.max(1, r.width),
         h: Math.max(1, r.height),
-        devtoolsOf: devtoolsOf ?? undefined,
+        devtoolsOf: devtoolsTarget ?? undefined,
       })
       .then(() => {
         if (closed) {
@@ -420,7 +424,7 @@ function BrowserViewImpl({
   // DevTools 뷰 — 인스펙터 자체가 완결된 UI 라 soksak 툴바(주소창/뒤로/앞으로/즐겨찾기)를 얹지 않는다.
   // 네이티브 DevTools child 가 이 영역을 채운다(레이어 원칙: DOM 아래 네이티브). 분할·이동·닫기는
   // 코어 view 시스템이 일반 뷰와 완전히 동일하게 처리한다(위 훅들은 그대로 돌아 bounds 추종/가시성 유지).
-  if (devtoolsOf) {
+  if (devtoolsTarget) {
     return (
       <div className="browser-view">
         <div className="bv-area" ref={areaRef} />
@@ -485,10 +489,9 @@ function BrowserViewImpl({
           title={t("inspect", lang)}
           data-node="devtools"
           onClick={() => {
-            // DevTools 를 새 탭으로 연다(이 브라우저를 검사 대상으로). 새 뷰가 마운트되며 devtoolsOf 로
-            // 임베드 → 분할·이동·닫기는 일반 탭과 동일. 코어 view.open 커맨드 경유(AI/CLI 로도 동일 제어).
-            setPendingDevtools(label);
-            void app.commands?.execute("view.open", { program: "browser-chromium" }).catch(() => {});
+            // DevTools 를 탭으로(이 브라우저를 검사 대상으로) — 이미 열려 있으면 그 탭 활성화(중복 방지).
+            // 분할·이동·닫기는 일반 탭과 동일(코어 view 커맨드 = 드래그와 같은 경로).
+            void openDevtoolsTab(app, label);
           }}
         >
           <IconTerminal />
