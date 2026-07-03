@@ -12767,7 +12767,11 @@ var EN = {
   addBookmark: "Add bookmark",
   removeBookmark: "Remove bookmark",
   noBookmarks: "No bookmarks",
-  inspect: "Inspect (devtools)"
+  inspect: "Inspect (devtools)",
+  dockBottom: "Dock DevTools to bottom",
+  dockTop: "Dock DevTools to top",
+  dockLeft: "Dock DevTools to left",
+  dockRight: "Dock DevTools to right"
 };
 var KO = {
   back: "\uC774\uC804",
@@ -12779,7 +12783,11 @@ var KO = {
   addBookmark: "\uC990\uACA8\uCC3E\uAE30 \uCD94\uAC00",
   removeBookmark: "\uC990\uACA8\uCC3E\uAE30 \uC81C\uAC70",
   noBookmarks: "\uC990\uACA8\uCC3E\uAE30\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4",
-  inspect: "\uC778\uC2A4\uD399\uD2B8(devtools)"
+  inspect: "\uC778\uC2A4\uD399\uD2B8(devtools)",
+  dockBottom: "DevTools \uC544\uB798 \uB3C4\uD0B9",
+  dockTop: "DevTools \uC704 \uB3C4\uD0B9",
+  dockLeft: "DevTools \uC67C\uCABD \uB3C4\uD0B9",
+  dockRight: "DevTools \uC624\uB978\uCABD \uB3C4\uD0B9"
 };
 function t(key, lang) {
   const dict = lang === "ko" ? KO : EN;
@@ -12838,7 +12846,12 @@ function loadInline() {
   try {
     const raw = sessionStorage.getItem(INLINE_KEY);
     if (!raw) return /* @__PURE__ */ new Map();
-    return new Map(Object.entries(JSON.parse(raw)));
+    const obj = JSON.parse(raw);
+    const m = /* @__PURE__ */ new Map();
+    for (const [k, v] of Object.entries(obj)) {
+      m.set(k, typeof v === "number" ? { ratio: v, side: "bottom" } : v);
+    }
+    return m;
   } catch {
     return /* @__PURE__ */ new Map();
   }
@@ -12853,8 +12866,8 @@ function persistInline() {
 function inlineMarkOf(label) {
   return inlineByLabel.get(label) ?? null;
 }
-function setInlineMark(label, ratio) {
-  inlineByLabel.set(label, ratio);
+function setInlineMark(label, mark) {
+  inlineByLabel.set(label, mark);
   persistInline();
 }
 function clearInlineMark(label) {
@@ -13155,10 +13168,10 @@ function registerInlineController(viewId, toggle) {
     inlineControllers.delete(viewId);
   };
 }
-function toggleInlineDevtools(viewId, screencast) {
+function toggleInlineDevtools(viewId, screencast, side) {
   const t2 = inlineControllers.get(viewId);
   if (!t2) return false;
-  t2(screencast);
+  t2(screencast, side);
   return true;
 }
 var activeViews = /* @__PURE__ */ new Map();
@@ -13313,13 +13326,22 @@ function registerCommands(ctx) {
     }
   });
   reg("devtools-inline", {
-    description: "Toggle Chrome DevTools as a split inside the browser view itself (page on top, DevTools below), regardless of the devtoolsOpenMode setting.",
-    triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uB0B4\uBD80 \uBD84\uD560 \uC778\uB77C\uC778 devtools inline" },
-    params: { ...targetParam, ...screencastParam },
+    description: "Toggle Chrome DevTools as a split inside the browser view itself, regardless of the devtoolsOpenMode setting. side docks DevTools to that edge (default bottom; last side is remembered); passing side while already open re-docks instead of closing.",
+    triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uB0B4\uBD80 \uBD84\uD560 \uC778\uB77C\uC778 \uB3C4\uD0B9 \uBC29\uD5A5 devtools inline" },
+    params: {
+      ...targetParam,
+      ...screencastParam,
+      side: {
+        type: "string",
+        description: "Dock side for DevTools inside the view: top | bottom | left | right. When already open, changes the dock side instead of toggling.",
+        required: false
+      }
+    },
     handler: async (p) => {
       const viewId = resolveViewId(explicitTarget(p));
       if (!viewId) return { ok: false, error: "no active browser view" };
-      return toggleInlineDevtools(viewId, scOf(p)) ? { ok: true, mode: "inline" } : { ok: false, error: "browser view not mounted" };
+      const side = p.side === "top" || p.side === "bottom" || p.side === "left" || p.side === "right" ? p.side : void 0;
+      return toggleInlineDevtools(viewId, scOf(p), side) ? { ok: true, mode: "inline", ...side ? { side } : {} } : { ok: false, error: "browser view not mounted" };
     }
   });
   reg("open", {
@@ -13378,6 +13400,13 @@ function IconMenu() {
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("line", { x1: "3", y1: "18", x2: "21", y2: "18" })
   ] });
 }
+function IconDock({ side }) {
+  const bar = side === "bottom" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "5", y: "13", width: "14", height: "6", rx: "1", fill: "currentColor", stroke: "none" }) : side === "top" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "5", y: "5", width: "14", height: "6", rx: "1", fill: "currentColor", stroke: "none" }) : side === "left" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "5", y: "5", width: "6", height: "14", rx: "1", fill: "currentColor", stroke: "none" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "13", y: "5", width: "6", height: "14", rx: "1", fill: "currentColor", stroke: "none" });
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "3", y: "3", width: "18", height: "18", rx: "2" }),
+    bar
+  ] });
+}
 function IconTerminal() {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("polyline", { points: "4 17 10 11 4 5" }),
@@ -13400,19 +13429,27 @@ function BrowserViewImpl({
     () => label ? inlineMarkOf(label) : null
   );
   const inlineScRef = (0, import_react.useRef)(void 0);
+  const inlineDtRef = (0, import_react.useRef)(inlineDt);
+  inlineDtRef.current = inlineDt;
   const toggleInline = (0, import_react.useCallback)(
-    (screencast) => {
-      if (!label) return;
-      setInlineDt((cur) => {
-        if (cur == null) {
-          inlineScRef.current = screencast;
-          const r = inlineMarkOf(label) ?? 0.55;
-          setInlineMark(label, r);
-          return r;
-        }
-        clearInlineMark(label);
-        return null;
-      });
+    (screencast, side) => {
+      if (!label) return null;
+      const cur = inlineDtRef.current;
+      let next;
+      if (cur == null) {
+        inlineScRef.current = screencast;
+        const prev = inlineMarkOf(label);
+        next = { ratio: prev?.ratio ?? 0.55, side: side ?? prev?.side ?? "bottom" };
+      } else if (side && side !== cur.side) {
+        next = { ...cur, side };
+      } else {
+        next = null;
+      }
+      if (next) setInlineMark(label, next);
+      else clearInlineMark(label);
+      inlineDtRef.current = next;
+      setInlineDt(next);
+      return next;
     },
     [label]
   );
@@ -13426,14 +13463,20 @@ function BrowserViewImpl({
       if (dtDividerDragActive) return;
       const area = areaRef.current;
       const wrap = area?.parentElement;
-      if (!area || !wrap || !label) return;
+      if (!area || !wrap || !label || !inlineDt) return;
       dtDividerDragActive = true;
-      const areaTop = area.getBoundingClientRect().top;
-      const wrapBottom = wrap.getBoundingClientRect().bottom;
-      const usable = Math.max(1, wrapBottom - areaTop - 6);
-      let last = inlineDt ?? 0.55;
+      const side = inlineDt.side;
+      const horizontal = side === "left" || side === "right";
+      const pageFirst = side === "bottom" || side === "right";
+      const wr = wrap.getBoundingClientRect();
+      const start = horizontal ? wr.left : wr.top;
+      const usable = Math.max(1, (horizontal ? wr.width : wr.height) - 6);
+      let last = inlineDt;
       const onMove = (ev) => {
-        last = Math.min(0.85, Math.max(0.15, (ev.clientY - areaTop) / usable));
+        const pos = horizontal ? ev.clientX : ev.clientY;
+        const frac = (pos - start) / usable;
+        const ratio = Math.min(0.85, Math.max(0.15, pageFirst ? frac : 1 - frac));
+        last = { ...last, ratio };
         setInlineDt(last);
       };
       const onUp = () => {
@@ -13586,6 +13629,17 @@ function BrowserViewImpl({
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, [syncBounds, app]);
+  const inlineSide = inlineDt?.side ?? null;
+  (0, import_react.useEffect)(() => {
+    if (!inlineSide) return;
+    lastRectRef.current = "";
+    syncBounds(true);
+    const t2 = setTimeout(() => {
+      lastRectRef.current = "";
+      syncBounds(true);
+    }, 120);
+    return () => clearTimeout(t2);
+  }, [inlineSide, syncBounds]);
   (0, import_react.useEffect)(() => {
     const el = areaRef.current;
     if (!el || !webview || !label) return;
@@ -13752,6 +13806,20 @@ function BrowserViewImpl({
           children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconTerminal, {})
         }
       ),
+      inlineDt != null && ["bottom", "top", "left", "right"].map((sd) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          type: "button",
+          className: `bv-btn${inlineDt.side === sd ? " on" : ""}`,
+          title: t(`dock${sd[0].toUpperCase()}${sd.slice(1)}`, lang),
+          "data-node": `dock-${sd}/${ctx.viewId ?? "solo"}`,
+          onClick: () => {
+            if (inlineDt.side !== sd) toggleInline(void 0, sd);
+          },
+          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconDock, { side: sd })
+        },
+        sd
+      )),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "button",
         {
@@ -13792,36 +13860,52 @@ function BrowserViewImpl({
         b.url
       ))
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      "div",
-      {
-        className: "bv-area",
-        ref: areaRef,
-        style: inlineDt != null ? { flex: `${inlineDt} 1 0px` } : void 0
+    (() => {
+      const side = inlineDt?.side;
+      const horizontal = side === "left" || side === "right";
+      const pageFirst = side === "bottom" || side === "right";
+      const pageEl = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          className: "bv-area",
+          ref: areaRef,
+          style: inlineDt ? { flex: `${inlineDt.ratio} 1 0px`, minWidth: 0 } : void 0
+        },
+        "page"
+      );
+      if (!inlineDt) {
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-split", style: { flexDirection: "column" }, children: pageEl });
       }
-    ),
-    inlineDt != null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      const dividerEl = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "div",
         {
           className: "bv-dt-divider",
-          "data-node": "dt-divider",
+          "data-node": `dt-divider/${ctx.viewId ?? "solo"}`,
           "data-native-drag": "",
-          style: { flex: "0 0 6px", cursor: "row-resize", background: "var(--bd-soft, #2a2a2a)" },
+          style: {
+            flex: "0 0 6px",
+            cursor: horizontal ? "col-resize" : "row-resize",
+            background: "var(--bd-soft, #2a2a2a)"
+          },
           onMouseDown: onDtDividerDown
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        },
+        "divider"
+      );
+      const dtEl = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         InlineDevtools,
         {
           app,
           webview,
           hostLabel: label,
-          grow: 1 - inlineDt,
+          grow: 1 - inlineDt.ratio,
+          side: inlineDt.side,
           screencast: inlineScRef.current
-        }
-      )
-    ] })
+        },
+        "dt"
+      );
+      const dir = horizontal ? pageFirst ? "row" : "row-reverse" : pageFirst ? "column" : "column-reverse";
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-split", style: { flexDirection: dir }, children: [pageEl, dividerEl, dtEl] });
+    })()
   ] });
 }
 function InlineDevtools({
@@ -13829,6 +13913,7 @@ function InlineDevtools({
   webview,
   hostLabel,
   grow,
+  side,
   screencast
 }) {
   const dtLabel = `${hostLabel}#dt`;
@@ -13885,6 +13970,15 @@ function InlineDevtools({
     };
   }, [dtLabel]);
   (0, import_react.useEffect)(() => {
+    lastRectRef.current = "";
+    sync(true);
+    const t2 = setTimeout(() => {
+      lastRectRef.current = "";
+      sync(true);
+    }, 120);
+    return () => clearTimeout(t2);
+  }, [side, sync]);
+  (0, import_react.useEffect)(() => {
     const el = ref.current;
     if (!el) return;
     let rafId = 0;
@@ -13930,7 +14024,7 @@ function InlineDevtools({
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, [sync, webview, dtLabel, app]);
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-dt-area", ref, style: { flex: `${grow} 1 0px` } });
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-dt-area", ref, style: { flex: `${grow} 1 0px`, minWidth: 0 } });
 }
 var BrowserView = (0, import_react.memo)(BrowserViewImpl);
 
@@ -14058,6 +14152,13 @@ var GLOBAL_CSS = `
 .bv-dt-area {
   min-height: 0;
   background: transparent;
+}
+/* inline \uBD84\uD560 \uB798\uD37C \u2014 \uBC29\uD5A5(flexDirection)\uC740 \uB3C4\uD0B9 side \uC5D0 \uB530\uB77C inline style \uB85C \uC9C0\uC815. */
+.bv-split {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
 }
 `;
 function injectStyles() {

@@ -125,6 +125,13 @@ export const GLOBAL_CSS = `
   min-height: 0;
   background: transparent;
 }
+/* inline 분할 래퍼 — 방향(flexDirection)은 도킹 side 에 따라 inline style 로 지정. */
+.bv-split {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
 `;
 
 export function injectStyles(): void {
