@@ -129,7 +129,13 @@ export const GLOBAL_CSS = `
 
 export function injectStyles(): void {
   const STYLE_ID = "sk-browser-style";
-  if (document.getElementById(STYLE_ID)) return;
+  const existing = document.getElementById(STYLE_ID);
+  if (existing) {
+    // 항상 최신으로 갱신 — 존재 가드만 하면 어떤 경로로든 살아남은 옛 <style> 이 새 규칙을 영원히
+    // 가린다(스타일만 안 바뀌는 유령 버그 부류의 원천 차단). textContent 교체는 멱등·저비용.
+    if (existing.textContent !== GLOBAL_CSS) existing.textContent = GLOBAL_CSS;
+    return;
+  }
   const s = document.createElement("style");
   s.id = STYLE_ID;
   s.textContent = GLOBAL_CSS;

@@ -37,6 +37,10 @@ function isComposingEnter(
 // 매 프레임(60~120Hz) 호출하면 OS 자체 라이브 리사이즈와 겹쳐 CPU 가 폭발한다 → ~30Hz 로
 // 제한하고 드래그 끝에 정확한 최종 rect 로 1회 스냅한다(시각 추종은 유지).
 const LIVE_THROTTLE_MS = 32;
+// inline divider 이중 시작 가드 — divider 는 DOM 띠라 실 mousedown 을 받고, 코어 네이티브
+// 브릿지([data-native-drag])도 합성 mousedown 을 쏜다(child 위로 드래그가 이어지도록). 둘 중
+// 먼저 온 쪽만 리스너를 건다(코어 그룹 divider 의 resizeDragActive 와 동형).
+let dtDividerDragActive = false;
 // 슬롯 rect 가 이 프레임 수만큼 연속 무변화면(=드래그 아님) 추종 루프를 멈춘다(idle 폴링 0).
 const STABLE_STOP_FRAMES = 4;
 
@@ -171,9 +175,11 @@ function BrowserViewImpl({
   const onDtDividerDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
+      if (dtDividerDragActive) return; // 실 DOM + 브릿지 합성 mousedown 중복 시작 무시
       const area = areaRef.current;
       const wrap = area?.parentElement;
       if (!area || !wrap || !label) return;
+      dtDividerDragActive = true;
       const areaTop = area.getBoundingClientRect().top;
       const wrapBottom = wrap.getBoundingClientRect().bottom;
       const usable = Math.max(1, wrapBottom - areaTop - 6);
@@ -185,6 +191,7 @@ function BrowserViewImpl({
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        dtDividerDragActive = false;
         setInlineMark(label, last);
       };
       window.addEventListener("mousemove", onMove);
@@ -615,7 +622,15 @@ function BrowserViewImpl({
       />
       {inlineDt != null && (
         <>
-          <div className="bv-dt-divider" data-node="dt-divider" onMouseDown={onDtDividerDown} />
+          <div
+            className="bv-dt-divider"
+            data-node="dt-divider"
+            data-native-drag=""
+            // 크기·커서는 inline 이 정본(스타일시트 전달 실패에도 6px 히트영역 보장 — 실측:
+            // 시트만으로는 h=0 이 관측됨). hover 강조만 시트(.bv-dt-divider:hover)에 남긴다.
+            style={{ flex: "0 0 6px", cursor: "row-resize", background: "var(--bd-soft, #2a2a2a)" }}
+            onMouseDown={onDtDividerDown}
+          />
           <InlineDevtools
             app={app}
             webview={webview}
