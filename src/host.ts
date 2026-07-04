@@ -125,6 +125,8 @@ export interface PluginApi {
   };
   events: {
     on: (event: string, fn: (payload: unknown) => void) => Disposable;
+    /** 진행 델타 발행(MESSAGE-PROTOCOL §2) — 장시간 명령의 실행 중 상태. 구코어 호환 optional. */
+    progress?: (command: string, delta: unknown) => void;
   };
   ui?: {
     registerView: (viewId: string, provider: PluginViewProvider) => Disposable;

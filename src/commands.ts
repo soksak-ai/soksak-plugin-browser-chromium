@@ -199,7 +199,10 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
       if (!e) return { ok: false, error: "no active browser view" };
-      await chromium.navigate(e.label, normalizeUrl(String(p.url ?? "")));
+      const url = normalizeUrl(String(p.url ?? ""));
+      // 진행 델타(MESSAGE-PROTOCOL §2) — 엔진 로드는 수 초 걸린다: 무엇을 하는 중인지 흘린다.
+      app.events.progress?.("navigate", `탐색: ${url}`);
+      await chromium.navigate(e.label, url);
       return { ok: true };
     },
   });
@@ -314,6 +317,8 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const url = typeof p.url === "string" ? p.url : undefined;
       if (url) setPendingUrl(normalizeUrl(url));
+      // 진행 델타 — CEF child 생성+첫 로드는 장시간 명령이다.
+      app.events.progress?.("open", url ? `여는 중: ${normalizeUrl(url)}` : "새 탭 여는 중");
       const out = await app.commands!.execute("view.open", { program: "browser-chromium" }).catch(() => null);
       if (!out || !out.ok) {
         if (url) takePendingUrl();
