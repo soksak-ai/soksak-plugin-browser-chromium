@@ -13733,6 +13733,9 @@ function BrowserViewImpl({
     const d1 = webview.on(label, "nav", (p) => {
       const url = p.url;
       setLocalUrl(url);
+      if (ctx.viewId && app.data && url && url !== "about:blank")
+        void app.data.kv.set(`vurl:${ctx.viewId}`, url).catch(() => {
+        });
     });
     const d2 = webview.on(label, "title", (p) => {
       const title = p.title;
@@ -14294,20 +14297,28 @@ var plugin_entry_default = {
           mount(container, vctx) {
             const devtools = takePendingDevtools();
             const pending = takePendingUrl();
-            const homeUrl = pending ?? app.settings.get("homeUrl") ?? "about:blank";
-            mountInto(
-              container,
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                BrowserView,
-                {
-                  app,
-                  ctx: vctx,
-                  initialUrl: homeUrl,
-                  devtoolsOf: devtools?.label ?? null,
-                  devtoolsScreencast: devtools?.screencast
-                }
-              )
-            );
+            const fallback = pending ?? app.settings.get("homeUrl") ?? "about:blank";
+            const doMount = (url) => {
+              if (!container.isConnected) return;
+              mountInto(
+                container,
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                  BrowserView,
+                  {
+                    app,
+                    ctx: vctx,
+                    initialUrl: url,
+                    devtoolsOf: devtools?.label ?? null,
+                    devtoolsScreencast: devtools?.screencast
+                  }
+                )
+              );
+            };
+            if (!pending && !devtools && vctx.viewId && app.data) {
+              void app.data.kv.get(`vurl:${vctx.viewId}`).then((v) => doMount(typeof v === "string" && v ? v : fallback)).catch(() => doMount(fallback));
+              return;
+            }
+            doMount(fallback);
           },
           unmount(container) {
             unmountContainer(container);
