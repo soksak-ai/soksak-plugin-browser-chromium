@@ -13270,7 +13270,7 @@ function registerCommands(ctx) {
       const e = resolveEntry(explicitTarget(p));
       if (!e) return { ok: false, error: "no active browser view" };
       const url = normalizeUrl(String(p.url ?? ""));
-      app.events.progress?.("navigate", `\uD0D0\uC0C9: ${url}`);
+      app.events.progress?.("navigate", url);
       await chromium.navigate(e.label, url);
       return { ok: true };
     }
@@ -13368,7 +13368,7 @@ function registerCommands(ctx) {
     handler: async (p) => {
       const url = typeof p.url === "string" ? p.url : void 0;
       if (url) setPendingUrl(normalizeUrl(url));
-      app.events.progress?.("open", url ? `\uC5EC\uB294 \uC911: ${normalizeUrl(url)}` : "\uC0C8 \uD0ED \uC5EC\uB294 \uC911");
+      app.events.progress?.("open", url ? normalizeUrl(url) : "");
       const out = await app.commands.execute("view.open", { program: "browser-chromium" }).catch(() => null);
       if (!out || !out.ok) {
         if (url) takePendingUrl();
