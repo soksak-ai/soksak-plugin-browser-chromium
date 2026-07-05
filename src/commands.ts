@@ -44,7 +44,7 @@ export async function openDevtoolsTab(
   app: PluginApi,
   inspectedLabel: string,
   screencast?: boolean,
-): Promise<{ ok: boolean; focused?: boolean; error?: string }> {
+): Promise<{ ok: boolean; focused?: boolean; code?: string; message?: string }> {
   const existing = devtoolsLabelFor(inspectedLabel);
   if (existing) {
     const viewId = existing.slice("chromium-".length);
@@ -66,7 +66,7 @@ export async function openDevtoolsTab(
     .catch(() => null);
   if (!out || !out.ok) {
     takePendingDevtools();
-    return { ok: false, error: "view.open failed" };
+    return { ok: false, code: "VIEW_OPEN_FAILED", message: "view.open failed" };
   }
   const dtViewId = typeof out.viewId === "string" ? out.viewId : null;
   if (dtViewId && grp) {
@@ -179,6 +179,7 @@ export function registerCommands(ctx: PluginContext): void {
 
   reg("stats", {
     description: "Live engine-side browser child ids + label/devtools mappings (E2E/diagnostics — verifies close really destroyed the child).",
+    message: (d) => `엔진 child ${(d.ids ?? []).length}개가 살아 있습니다.`,
     handler: async () => ({
       ok: true,
       ids: await engineStats(app),
@@ -189,16 +190,18 @@ export function registerCommands(ctx: PluginContext): void {
 
   reg("ping", {
     description: "Load/version check — returns the plugin id and engine (E2E).",
+    message: (d) => `${d.engine} 엔진이 응답합니다.`,
     handler: () => ({ ok: true, plugin: app.pluginId, engine: "chromium" }),
   });
 
   reg("navigate", {
     description: "Navigate the active (or specified) browser view to a URL.",
     triggers: { ko: "이동 주소 열기 navigate 크롬" },
+    message: () => "페이지로 이동했습니다.",
     params: { ...targetParam, url: { type: "string", description: "URL or search terms", required: true } },
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       const url = normalizeUrl(String(p.url ?? ""));
       // 진행 델타(MESSAGE-PROTOCOL §2) — 엔진 로드는 수 초 걸린다: 무엇을 하는 중인지 흘린다.
       app.events.progress?.("navigate", url); // 델타=URL만(프레임 단어 없음, P0)
@@ -210,10 +213,11 @@ export function registerCommands(ctx: PluginContext): void {
   reg("back", {
     description: "Go back in the active browser view's history.",
     triggers: { ko: "뒤로 이전 back" },
+    message: () => "뒤로 이동했습니다.",
     params: targetParam,
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.history(e.label, -1);
       return { ok: true };
     },
@@ -222,10 +226,11 @@ export function registerCommands(ctx: PluginContext): void {
   reg("forward", {
     description: "Go forward in the active browser view's history.",
     triggers: { ko: "앞으로 다음 forward" },
+    message: () => "앞으로 이동했습니다.",
     params: targetParam,
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.history(e.label, 1);
       return { ok: true };
     },
@@ -234,10 +239,11 @@ export function registerCommands(ctx: PluginContext): void {
   reg("reload", {
     description: "Reload the current page in the active browser view.",
     triggers: { ko: "새로고침 리로드 reload" },
+    message: () => "페이지를 새로고침했습니다.",
     params: targetParam,
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.navigate(e.label, e.getUrl());
       return { ok: true };
     },
@@ -256,18 +262,19 @@ export function registerCommands(ctx: PluginContext): void {
   reg("devtools", {
     description: "Open Chrome DevTools for the active browser view. Follows the devtoolsOpenMode setting: 'tab' opens an independent tab (splittable/movable), 'inline' toggles a split inside the browser view. Use devtools-tab / devtools-inline to force a mode.",
     triggers: { ko: "개발자 도구 인스펙터 devtools 열기" },
+    message: (d) => (d.mode === "inline" ? "DevTools 인라인을 토글했습니다." : "DevTools 를 열었습니다."),
     params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
       const mode = app.settings?.get("devtoolsOpenMode") === "inline" ? "inline" : "tab";
       if (mode === "inline") {
         const viewId = resolveViewId(explicitTarget(p));
-        if (!viewId) return { ok: false, error: "no active browser view" };
+        if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
         return toggleInlineDevtools(viewId, scOf(p))
           ? { ok: true, mode: "inline" }
-          : { ok: false, error: "browser view not mounted" };
+          : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted" };
       }
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       return openDevtoolsTab(app, e.label, scOf(p));
     },
   });
@@ -275,10 +282,11 @@ export function registerCommands(ctx: PluginContext): void {
   reg("devtools-tab", {
     description: "Open Chrome DevTools as an independent tab (splittable/movable like any view), regardless of the devtoolsOpenMode setting. Focuses the existing DevTools tab if one is already open for that view.",
     triggers: { ko: "개발자 도구 독립 탭 devtools tab" },
+    message: (d) => (d.focused ? "기존 DevTools 탭을 활성화했습니다." : "DevTools 탭을 열었습니다."),
     params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       // DevTools 도 일반 브라우저 뷰다 — 새 뷰가 마운트되며 inspected(e.label)의 DevTools 프론트엔드를
       // 연다. 이후 분할/이동/닫기는 코어 view 커맨드(드래그와 동일 경로)로 동일하게 제어된다.
       return openDevtoolsTab(app, e.label, scOf(p));
@@ -288,6 +296,7 @@ export function registerCommands(ctx: PluginContext): void {
   reg("devtools-inline", {
     description: "Toggle Chrome DevTools as a split inside the browser view itself, regardless of the devtoolsOpenMode setting. side docks DevTools to that edge (default bottom; last side is remembered); passing side while already open re-docks instead of closing.",
     triggers: { ko: "개발자 도구 내부 분할 인라인 도킹 방향 devtools inline" },
+    message: (d) => (d.side ? `DevTools 를 ${d.side} 쪽에 도킹했습니다.` : "DevTools 인라인을 토글했습니다."),
     params: {
       ...targetParam,
       ...screencastParam,
@@ -299,20 +308,21 @@ export function registerCommands(ctx: PluginContext): void {
     },
     handler: async (p) => {
       const viewId = resolveViewId(explicitTarget(p));
-      if (!viewId) return { ok: false, error: "no active browser view" };
+      if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       const side =
         p.side === "top" || p.side === "bottom" || p.side === "left" || p.side === "right"
           ? p.side
           : undefined;
       return toggleInlineDevtools(viewId, scOf(p), side)
         ? { ok: true, mode: "inline", ...(side ? { side } : {}) }
-        : { ok: false, error: "browser view not mounted" };
+        : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted" };
     },
   });
 
   reg("open", {
     description: "Open a new browser content view, optionally at a URL.",
     triggers: { ko: "브라우저 열기 새탭 open" },
+    message: () => "브라우저를 열었습니다.",
     params: { url: { type: "string", description: "URL to open (optional)", required: false } },
     handler: async (p) => {
       const url = typeof p.url === "string" ? p.url : undefined;
@@ -322,7 +332,7 @@ export function registerCommands(ctx: PluginContext): void {
       const out = await app.commands!.execute("view.open", { program: "browser-chromium" }).catch(() => null);
       if (!out || !out.ok) {
         if (url) takePendingUrl();
-        return { ok: false, error: "view.open failed" };
+        return { ok: false, code: "VIEW_OPEN_FAILED", message: "view.open failed" };
       }
       return { ok: true };
     },

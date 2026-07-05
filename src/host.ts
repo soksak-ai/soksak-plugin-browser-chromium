@@ -34,6 +34,8 @@ export interface PluginCommandSpec {
   triggers?: Record<string, string>;
   params?: Record<string, ParamSpec>;
   returns?: string;
+  // 성공 결과를 한 문장으로 요약(활동 스트림 발화). d = 핸들러의 성공 data.
+  message?: (data: any) => string;
   handler: (params: Record<string, unknown>) => Promise<object> | object;
 }
 
