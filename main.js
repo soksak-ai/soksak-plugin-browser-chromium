@@ -13167,7 +13167,7 @@ async function openDevtoolsTab(app, inspectedLabel, screencast) {
   const out = await app.commands?.execute("view.open", { program: "browser-chromium" }).catch(() => null);
   if (!out || !out.ok) {
     takePendingDevtools();
-    return { ok: false, error: "view.open failed" };
+    return { ok: false, code: "VIEW_OPEN_FAILED", message: "view.open failed" };
   }
   const dtViewId = typeof out.viewId === "string" ? out.viewId : null;
   if (dtViewId && grp) {
@@ -13251,6 +13251,7 @@ function registerCommands(ctx) {
   };
   reg("stats", {
     description: "Live engine-side browser child ids + label/devtools mappings (E2E/diagnostics \u2014 verifies close really destroyed the child).",
+    message: (d) => `\uC5D4\uC9C4 child ${(d.ids ?? []).length}\uAC1C\uAC00 \uC0B4\uC544 \uC788\uC2B5\uB2C8\uB2E4.`,
     handler: async () => ({
       ok: true,
       ids: await engineStats(app),
@@ -13260,15 +13261,17 @@ function registerCommands(ctx) {
   });
   reg("ping", {
     description: "Load/version check \u2014 returns the plugin id and engine (E2E).",
+    message: (d) => `${d.engine} \uC5D4\uC9C4\uC774 \uC751\uB2F5\uD569\uB2C8\uB2E4.`,
     handler: () => ({ ok: true, plugin: app.pluginId, engine: "chromium" })
   });
   reg("navigate", {
     description: "Navigate the active (or specified) browser view to a URL.",
     triggers: { ko: "\uC774\uB3D9 \uC8FC\uC18C \uC5F4\uAE30 navigate \uD06C\uB86C" },
+    message: () => "\uD398\uC774\uC9C0\uB85C \uC774\uB3D9\uD588\uC2B5\uB2C8\uB2E4.",
     params: { ...targetParam, url: { type: "string", description: "URL or search terms", required: true } },
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       const url = normalizeUrl(String(p.url ?? ""));
       app.events.progress?.("navigate", url);
       await chromium.navigate(e.label, url);
@@ -13278,10 +13281,11 @@ function registerCommands(ctx) {
   reg("back", {
     description: "Go back in the active browser view's history.",
     triggers: { ko: "\uB4A4\uB85C \uC774\uC804 back" },
+    message: () => "\uB4A4\uB85C \uC774\uB3D9\uD588\uC2B5\uB2C8\uB2E4.",
     params: targetParam,
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.history(e.label, -1);
       return { ok: true };
     }
@@ -13289,10 +13293,11 @@ function registerCommands(ctx) {
   reg("forward", {
     description: "Go forward in the active browser view's history.",
     triggers: { ko: "\uC55E\uC73C\uB85C \uB2E4\uC74C forward" },
+    message: () => "\uC55E\uC73C\uB85C \uC774\uB3D9\uD588\uC2B5\uB2C8\uB2E4.",
     params: targetParam,
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.history(e.label, 1);
       return { ok: true };
     }
@@ -13300,10 +13305,11 @@ function registerCommands(ctx) {
   reg("reload", {
     description: "Reload the current page in the active browser view.",
     triggers: { ko: "\uC0C8\uB85C\uACE0\uCE68 \uB9AC\uB85C\uB4DC reload" },
+    message: () => "\uD398\uC774\uC9C0\uB97C \uC0C8\uB85C\uACE0\uCE68\uD588\uC2B5\uB2C8\uB2E4.",
     params: targetParam,
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.navigate(e.label, e.getUrl());
       return { ok: true };
     }
@@ -13319,32 +13325,35 @@ function registerCommands(ctx) {
   reg("devtools", {
     description: "Open Chrome DevTools for the active browser view. Follows the devtoolsOpenMode setting: 'tab' opens an independent tab (splittable/movable), 'inline' toggles a split inside the browser view. Use devtools-tab / devtools-inline to force a mode.",
     triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uC778\uC2A4\uD399\uD130 devtools \uC5F4\uAE30" },
+    message: (d) => d.mode === "inline" ? "DevTools \uC778\uB77C\uC778\uC744 \uD1A0\uAE00\uD588\uC2B5\uB2C8\uB2E4." : "DevTools \uB97C \uC5F4\uC5C8\uC2B5\uB2C8\uB2E4.",
     params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
       const mode = app.settings?.get("devtoolsOpenMode") === "inline" ? "inline" : "tab";
       if (mode === "inline") {
         const viewId = resolveViewId(explicitTarget(p));
-        if (!viewId) return { ok: false, error: "no active browser view" };
-        return toggleInlineDevtools(viewId, scOf(p)) ? { ok: true, mode: "inline" } : { ok: false, error: "browser view not mounted" };
+        if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+        return toggleInlineDevtools(viewId, scOf(p)) ? { ok: true, mode: "inline" } : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted" };
       }
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       return openDevtoolsTab(app, e.label, scOf(p));
     }
   });
   reg("devtools-tab", {
     description: "Open Chrome DevTools as an independent tab (splittable/movable like any view), regardless of the devtoolsOpenMode setting. Focuses the existing DevTools tab if one is already open for that view.",
     triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uB3C5\uB9BD \uD0ED devtools tab" },
+    message: (d) => d.focused ? "\uAE30\uC874 DevTools \uD0ED\uC744 \uD65C\uC131\uD654\uD588\uC2B5\uB2C8\uB2E4." : "DevTools \uD0ED\uC744 \uC5F4\uC5C8\uC2B5\uB2C8\uB2E4.",
     params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
       const e = resolveEntry(explicitTarget(p));
-      if (!e) return { ok: false, error: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       return openDevtoolsTab(app, e.label, scOf(p));
     }
   });
   reg("devtools-inline", {
     description: "Toggle Chrome DevTools as a split inside the browser view itself, regardless of the devtoolsOpenMode setting. side docks DevTools to that edge (default bottom; last side is remembered); passing side while already open re-docks instead of closing.",
     triggers: { ko: "\uAC1C\uBC1C\uC790 \uB3C4\uAD6C \uB0B4\uBD80 \uBD84\uD560 \uC778\uB77C\uC778 \uB3C4\uD0B9 \uBC29\uD5A5 devtools inline" },
+    message: (d) => d.side ? `DevTools \uB97C ${d.side} \uCABD\uC5D0 \uB3C4\uD0B9\uD588\uC2B5\uB2C8\uB2E4.` : "DevTools \uC778\uB77C\uC778\uC744 \uD1A0\uAE00\uD588\uC2B5\uB2C8\uB2E4.",
     params: {
       ...targetParam,
       ...screencastParam,
@@ -13356,14 +13365,15 @@ function registerCommands(ctx) {
     },
     handler: async (p) => {
       const viewId = resolveViewId(explicitTarget(p));
-      if (!viewId) return { ok: false, error: "no active browser view" };
+      if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       const side = p.side === "top" || p.side === "bottom" || p.side === "left" || p.side === "right" ? p.side : void 0;
-      return toggleInlineDevtools(viewId, scOf(p), side) ? { ok: true, mode: "inline", ...side ? { side } : {} } : { ok: false, error: "browser view not mounted" };
+      return toggleInlineDevtools(viewId, scOf(p), side) ? { ok: true, mode: "inline", ...side ? { side } : {} } : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted" };
     }
   });
   reg("open", {
     description: "Open a new browser content view, optionally at a URL.",
     triggers: { ko: "\uBE0C\uB77C\uC6B0\uC800 \uC5F4\uAE30 \uC0C8\uD0ED open" },
+    message: () => "\uBE0C\uB77C\uC6B0\uC800\uB97C \uC5F4\uC5C8\uC2B5\uB2C8\uB2E4.",
     params: { url: { type: "string", description: "URL to open (optional)", required: false } },
     handler: async (p) => {
       const url = typeof p.url === "string" ? p.url : void 0;
@@ -13372,7 +13382,7 @@ function registerCommands(ctx) {
       const out = await app.commands.execute("view.open", { program: "browser-chromium" }).catch(() => null);
       if (!out || !out.ok) {
         if (url) takePendingUrl();
-        return { ok: false, error: "view.open failed" };
+        return { ok: false, code: "VIEW_OPEN_FAILED", message: "view.open failed" };
       }
       return { ok: true };
     }
