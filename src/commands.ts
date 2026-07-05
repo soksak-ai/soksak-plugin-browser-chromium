@@ -201,7 +201,7 @@ export function registerCommands(ctx: PluginContext): void {
       if (!e) return { ok: false, error: "no active browser view" };
       const url = normalizeUrl(String(p.url ?? ""));
       // 진행 델타(MESSAGE-PROTOCOL §2) — 엔진 로드는 수 초 걸린다: 무엇을 하는 중인지 흘린다.
-      app.events.progress?.("navigate", `탐색: ${url}`);
+      app.events.progress?.("navigate", url); // 델타=URL만(프레임 단어 없음, P0)
       await chromium.navigate(e.label, url);
       return { ok: true };
     },
@@ -318,7 +318,7 @@ export function registerCommands(ctx: PluginContext): void {
       const url = typeof p.url === "string" ? p.url : undefined;
       if (url) setPendingUrl(normalizeUrl(url));
       // 진행 델타 — CEF child 생성+첫 로드는 장시간 명령이다.
-      app.events.progress?.("open", url ? `여는 중: ${normalizeUrl(url)}` : "새 탭 여는 중");
+      app.events.progress?.("open", url ? normalizeUrl(url) : ""); // 델타=URL만(프레임 없음, P0)
       const out = await app.commands!.execute("view.open", { program: "browser-chromium" }).catch(() => null);
       if (!out || !out.ok) {
         if (url) takePendingUrl();
