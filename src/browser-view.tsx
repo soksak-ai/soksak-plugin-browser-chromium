@@ -8,6 +8,7 @@
 
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type { PluginApi, PluginViewContext } from "./host";
+import { boundsCommitDecision, followShouldContinue } from "./bounds-follow";
 import { t } from "./i18n";
 import {
   makeChromium,
@@ -50,7 +51,7 @@ const STABLE_STOP_FRAMES = 4;
 
 // 디바이더 드래그(layout.resize-gesture) 진행 여부 — 모듈 스코프: 본체 뷰가 구독·갱신하고
 // inline DevTools 컴포넌트의 bounds 싱크도 같은 게이트를 본다(둘 다 이 파일).
-// 드래그 동안 surface bounds 커밋을 전면 유예한다(성능 헌법 5·5a).
+// 드래그 내내 추종 루프를 살려 surface bounds 를 매 프레임 커밋한다(DOM 과 실시간 일치).
 let resizeGestureActive = false;
 
 // ── URL 정규화 (코어 BrowserView.tsx 와 동일) ────────────────────────────────
@@ -261,10 +262,6 @@ function BrowserViewImpl({
   const lastRectRef = useRef("");
   // 라이브 리사이즈(가장자리 드래그) 진행 여부 — 코어 app.events("window.live-resize") 게이트.
   const liveRef = useRef(false);
-  // freeze-frame 스탠드인 — 제스처 시작 시점 슬롯의 캡처(data URL + 논리 크기).
-  // CEF surface 는 DOM 위 합성이라, 스탠드인이 보이려면 캡처 도착 후 surface 를 숨긴다
-  // (숨김이 먼저면 캡처 도착까지 공백 — 순서가 본질). WKWebView(아래층)와 다른 지점.
-  const [freeze, setFreeze] = useState<{ url: string; w: number; h: number } | null>(null);
   // 마지막으로 네이티브 bounds 를 보낸 시각(드래그 중 ~30Hz 스로틀 기준).
   const lastSentRef = useRef(0);
   // 마지막 가시성(탭 활성 여부). 코어는 엔진 child 를 모르므로(네이티브 webview 만 숨김) 탭 전환
@@ -321,9 +318,6 @@ function BrowserViewImpl({
   // 정확 스냅(스로틀 무시).
   const syncBounds = useCallback(
     (force = false): "sent" | "pending" | "same" => {
-      // 디바이더 드래그 중엔 측정(reflow)도 전송도 하지 않는다 — freeze-frame 이 시각을
-      // 잇고, 끝(force)에 최종 rect 로 1회 스냅한다(성능 헌법 5·5a).
-      if (resizeGestureActive && !force) return "same";
       const el = areaRef.current;
       if (!el || !openedRef.current || !webview || !label) return "same";
       // 숨김(다른 탭) 상태면 bounds 를 보내지 않는다 — 가시성은 IntersectionObserver 가 관리(아래).
@@ -335,11 +329,17 @@ function BrowserViewImpl({
       const w = Math.max(1, Math.floor(r.right) - x);
       const h = Math.max(1, Math.floor(r.bottom) - y);
       const key = `${x},${y},${w},${h}`;
-      if (key === lastRectRef.current) return "same";
-      if (!force && liveRef.current) {
-        // 변화는 있으나 직전 전송 후 스로틀 간격 전 → 보류(rect/시각은 다음 프레임에 반영).
-        if (performance.now() - lastSentRef.current < LIVE_THROTTLE_MS) return "pending";
-      }
+      // 커밋 판정은 순수 정책(bounds-follow.ts)이 소유 — gesture 는 유예를 만들지 않는다(실시간 계약).
+      const decision = boundsCommitDecision({
+        force,
+        live: liveRef.current,
+        gesture: resizeGestureActive,
+        sameRect: key === lastRectRef.current,
+        msSinceLast: performance.now() - lastSentRef.current,
+        throttleMs: LIVE_THROTTLE_MS,
+      });
+      if (decision === "skip") return "same";
+      if (decision === "pending") return "pending";
       lastRectRef.current = key;
       lastSentRef.current = performance.now();
       void webview.bounds(label, x, y, w, h);
@@ -411,8 +411,15 @@ function BrowserViewImpl({
       rafId = 0;
       const s = syncBounds();
       stable = s === "same" ? stable + 1 : 0;
-      // 드래그 중이거나 아직 안정 전이면 계속 추종, 아니면 멈춘다(idle 0).
-      if (liveRef.current || stable < STABLE_STOP_FRAMES) {
+      // 드래그(창 리사이즈·디바이더) 중이거나 아직 안정 전이면 계속 추종, 아니면 멈춘다(idle 0).
+      if (
+        followShouldContinue({
+          live: liveRef.current,
+          gesture: resizeGestureActive,
+          stableFrames: stable,
+          stopAfter: STABLE_STOP_FRAMES,
+        })
+      ) {
         rafId = requestAnimationFrame(tick);
       }
     };
@@ -443,50 +450,17 @@ function BrowserViewImpl({
       arm();
     });
 
-    // 디바이더 드래그(freeze-frame) — layout.resize-gesture(창-로컬). CEF 는 DOM 위 합성이라:
-    //   시작: 슬롯 캡처(비동기) → 도착 시 스탠드인 마운트 → 그 다음 surface 숨김(순서가 본질 —
-    //         숨김이 먼저면 캡처 도착까지 공백). 도착 전엔 stale surface 가 그대로 보인다(공백 0).
-    //   끝:   최종 rect 1회 스냅 → surface 복원(ack) → rAF 후 스탠드인 제거(복원 전 제거 = 1프레임 공백).
-    //   캡처 실패/조기 종료 = 스탠드인 없이 기존 동작(폴백 — surface 는 숨긴 적 없음).
+    // 디바이더 드래그 — layout.resize-gesture(창-로컬). 드래그 내내 추종 루프를 살려 매 프레임
+    // 앵커 rect 로 surface bounds 를 커밋한다: DOM 분할은 이미 매 프레임 라이브 커밋이므로
+    // surface 가 같은 리듬으로 따라와야 실시간 리사이즈다(최대 1프레임 지연). 변화 없는 프레임은
+    // same-rect 스킵이라 IPC 0. 끝: 최종 레이아웃 커밋 후 도착하므로 최종 rect 로 1회 강제 스냅.
+    // (freeze-frame 정지 사진·surface 숨김/복원은 폐기 — 드래그 중 콘텐츠가 박제되고, 옛 크기
+    //  스탠드인이 빈 슬롯을 드러내는 잔상의 근원이었다.)
     const offGesture = app.events.on("layout.resize-gesture", (p) => {
       const active = !!(p as { active?: boolean }).active;
       resizeGestureActive = active;
-      // 가시(활성 탭) 뷰만 대상 — parked(비활성) 뷰의 surface 는 원래 숨김이므로
-      // 여기서 건드리면 드래그 끝에 비활성 표면이 복원돼 화면에 노출된다.
-      if (!lastVisibleRef.current) return;
-      const dtLabel = label ? `${label}#dt` : null;
-      if (active) {
-        const area = areaRef.current;
-        if (area && webview && label && openedRef.current) {
-          const r = area.getBoundingClientRect();
-          const rect = { x: r.left, y: r.top, w: r.width, h: r.height };
-          if (rect.w >= 1 && rect.h >= 1) {
-            void webview
-              .captureRegion(rect)
-              .then(async (url) => {
-                if (!resizeGestureActive) return; // 늦은 캡처는 버린다
-                setFreeze({ url, w: rect.w, h: rect.h });
-                await webview.visible(label, false).catch(() => {});
-                if (dtLabel) await webview.visible(dtLabel, false).catch(() => {});
-              })
-              .catch(() => {});
-          }
-        }
-      } else {
-        syncBounds(true);
-        if (webview && label) {
-          void (async () => {
-            await webview.visible(label, true).catch(() => {});
-            if (dtLabel) await webview.visible(dtLabel, true).catch(() => {});
-            requestAnimationFrame(() =>
-              requestAnimationFrame(() => setFreeze(null)),
-            );
-          })();
-        } else {
-          setFreeze(null);
-        }
-        arm(); // 잔여 레이아웃 정착 보정.
-      }
+      if (!active) syncBounds(true);
+      arm();
     });
 
     arm(); // 초기 정착 1회.
@@ -636,13 +610,7 @@ function BrowserViewImpl({
   if (devtoolsTarget) {
     return (
       <div className="browser-view">
-        <div className="bv-area" ref={areaRef}>
-          {freeze && (
-          <div className="bv-freeze" data-node="freeze">
-            <img src={freeze.url} width={freeze.w} height={freeze.h} alt="" draggable={false} />
-          </div>
-        )}
-        </div>
+        <div className="bv-area" ref={areaRef} />
       </div>
     );
   }
@@ -779,13 +747,7 @@ function BrowserViewImpl({
             className="bv-area"
             ref={areaRef}
             style={inlineDt ? { flex: `${inlineDt.ratio} 1 0px`, minWidth: 0 } : undefined}
-          >
-            {freeze && (
-              <div className="bv-freeze" data-node="freeze">
-                <img src={freeze.url} width={freeze.w} height={freeze.h} alt="" draggable={false} />
-              </div>
-            )}
-          </div>
+          />
         );
         if (!inlineDt) {
           return (
