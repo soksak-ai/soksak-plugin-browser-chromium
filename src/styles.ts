@@ -110,21 +110,6 @@ export const GLOBAL_CSS = `
   background: transparent;
   position: relative;
 }
-/* freeze-frame: 디바이더 드래그 동안의 시각 연속 스탠드인(성능 헌법 5a). 컨테이너는 불투명
-   배경 — 슬롯이 자라며 새로 노출되는 영역을 가린다. 이미지는 top-left 앵커·무스케일.
-   CEF surface(DOM 위)는 스탠드인 마운트 후 숨겨지고, 드래그 끝 복원 후 스탠드인이 걷힌다. */
-.bv-freeze {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: var(--bg, #1e1e1e);
-  z-index: 3;
-}
-.bv-freeze > img {
-  display: block;
-  user-select: none;
-  pointer-events: none;
-}
 /* inline DevTools(같은 탭 내부 분할) — 페이지/DevTools 두 홀 사이의 리사이즈 divider.
    6px DOM 띠는 어느 child rect 에도 안 덮여(두 홀 사이 갭) 마우스를 직접 받는다. */
 .bv-dt-divider {
