@@ -12804,6 +12804,19 @@ function t(key, lang) {
   return dict[key] ?? EN[key] ?? key;
 }
 
+// src/orphan-reconcile.ts
+function reconcileOrphans(i) {
+  const live = new Set(i.live);
+  const mapped = new Set(i.mapped);
+  const close = [];
+  const forget = [];
+  for (const id of i.ledger) {
+    if (!live.has(id)) forget.push(id);
+    else if (!mapped.has(id)) close.push(id);
+  }
+  return { close, forget };
+}
+
 // src/chromium-adapter.ts
 var STORE_KEY = "soksak-plugin-browser-chromium:children";
 var ADOPT_GRACE_MS = 5e3;
@@ -12824,6 +12837,27 @@ function persist() {
   for (const cb of dtMapListeners) cb();
 }
 var idByLabel = loadPersisted();
+var CREATED_KEY = "soksak-plugin-browser-chromium:created";
+function loadCreated() {
+  try {
+    const raw = sessionStorage.getItem(CREATED_KEY);
+    if (!raw) return /* @__PURE__ */ new Set();
+    return new Set(JSON.parse(raw));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+}
+var allCreated = loadCreated();
+function persistCreated() {
+  try {
+    sessionStorage.setItem(CREATED_KEY, JSON.stringify([...allCreated]));
+  } catch {
+  }
+}
+function noteCreated(id) {
+  allCreated.add(id);
+  persistCreated();
+}
 var DT_KEY = "soksak-plugin-browser-chromium:devtools";
 function loadDevtoolsMarks() {
   try {
@@ -12896,31 +12930,87 @@ function clearInlineMark(label) {
 function idMapSnapshot() {
   return Object.fromEntries(idByLabel);
 }
+function ledgerSnapshot() {
+  return [...allCreated];
+}
+async function runReconcile(app) {
+  const live = await engineStats(app);
+  if (live == null) return { ok: false, reason: "engine stats unavailable" };
+  const mapped = [...idByLabel.values()];
+  const { close, forget } = reconcileOrphans({ live, mapped, ledger: [...allCreated] });
+  for (const id of close) sendClose(app, id);
+  for (const id of forget) allCreated.delete(id);
+  if (forget.length) persistCreated();
+  return { ok: true, live, mapped, ledger: ledgerSnapshot(), closed: close, forgot: forget };
+}
 var unclaimed = new Set(idByLabel.keys());
-var sweepScheduled = idByLabel.size > 0;
+var sweepScheduled = true;
+var instanceTimers = /* @__PURE__ */ new Set();
 function scheduleOrphanSweep(app) {
   if (!sweepScheduled) return;
   sweepScheduled = false;
-  setTimeout(() => {
+  const t2 = setTimeout(() => {
+    instanceTimers.delete(t2);
     for (const label of unclaimed) {
       const id = idByLabel.get(label);
       idByLabel.delete(label);
       devtoolsByLabel.delete(label);
       if (id != null) {
-        console.warn(`[browser-chromium] \uBBF8\uC785\uC591 child \uD68C\uC218: ${label} (id=${id})`);
-        void send(app, { type: "close", id });
+        console.warn(`[browser-chromium] \uBBF8\uC778\uC218 child \uD68C\uC218: ${label} (id=${id})`);
+        sendClose(app, id);
       }
     }
     unclaimed.clear();
     persist();
     persistDevtools();
+    void engineStats(app).then((live) => {
+      if (live == null) return;
+      const { close, forget } = reconcileOrphans({
+        live,
+        mapped: [...idByLabel.values()],
+        ledger: [...allCreated]
+      });
+      for (const id of close) {
+        console.warn(`[browser-chromium] \uBBF8\uD68C\uC218 \uC794\uC874 child \uD68C\uC218: id=${id}`);
+        sendClose(app, id);
+      }
+      for (const id of forget) allCreated.delete(id);
+      if (forget.length) persistCreated();
+    });
   }, ADOPT_GRACE_MS);
+  instanceTimers.add(t2);
+}
+var instanceDead = false;
+function cancelInstanceTimers() {
+  instanceDead = true;
+  for (const t2 of instanceTimers) clearTimeout(t2);
+  instanceTimers.clear();
+  for (const t2 of pendingClose.values()) clearTimeout(t2);
+  pendingClose.clear();
 }
 var pendingClose = /* @__PURE__ */ new Map();
 var CLOSE_DEBOUNCE_MS = 600;
+var closeSent = /* @__PURE__ */ new Set();
+var pluginDbg = {
+  closeCalls: 0,
+  instanceDeadSkip: 0,
+  debounceSet: 0,
+  debounceFired: 0,
+  existsTrue: 0,
+  existsFalse: 0,
+  existsNull: 0,
+  sendCloses: 0
+};
+function sendClose(app, id) {
+  if (closeSent.has(id)) return;
+  closeSent.add(id);
+  pluginDbg.sendCloses++;
+  void send(app, { type: "close", id });
+}
 async function viewExistsAnywhere(app, viewId) {
   const cl = await app.commands?.execute("content.list", {}).catch(() => null);
-  const contents = (cl && cl.contents || []).map((c) => c.id);
+  if (cl == null) return null;
+  const contents = (cl.contents || []).map((c) => c.id);
   for (const content of contents.length ? contents : [void 0]) {
     const pl = await app.commands?.execute("panel.list", content ? { content } : {}).catch(() => null);
     const groups = (pl && pl.panels || []).map((g) => g.id);
@@ -12954,9 +13044,15 @@ async function send(app, msg) {
     return null;
   }
 }
+var lastEngineDbg = null;
+function engineDbgSnapshot() {
+  return lastEngineDbg;
+}
 async function engineStats(app) {
   const out = await send(app, { type: "stats" });
-  return out && Array.isArray(out.ids) ? out.ids : [];
+  if (out && out.dbg !== void 0) lastEngineDbg = out.dbg;
+  if (out == null) return null;
+  return Array.isArray(out.ids) ? out.ids : [];
 }
 function makeChromium(app) {
   scheduleOrphanSweep(app);
@@ -13007,6 +13103,7 @@ function makeChromium(app) {
         const id2 = out2 && typeof out2.id === "number" ? out2.id : null;
         if (id2 != null) {
           idByLabel.set(label, id2);
+          noteCreated(id2);
           devtoolsByLabel.set(label, o.devtoolsOf);
           persist();
           persistDevtools();
@@ -13027,11 +13124,12 @@ function makeChromium(app) {
       if (id != null) {
         idByLabel.set(label, id);
         persist();
+        noteCreated(id);
       }
     },
     bounds: async (label, x, y, w, h) => {
       const id = idByLabel.get(label);
-      if (id == null) return;
+      if (id == null || closeSent.has(id)) return;
       await send(app, {
         type: "bounds",
         id,
@@ -13043,7 +13141,7 @@ function makeChromium(app) {
     },
     visible: async (label, visible) => {
       const id = idByLabel.get(label);
-      if (id == null) return;
+      if (id == null || closeSent.has(id)) return;
       await send(app, { type: "hidden", id, hidden: !visible });
     },
     // 캡처는 창 합성(코어 능력)이라 엔진 무관 — 코어 webview 능력으로 위임("webview" 권한).
@@ -13054,22 +13152,27 @@ function makeChromium(app) {
     },
     navigate: async (label, url) => {
       const id = idByLabel.get(label);
-      if (id == null) return;
+      if (id == null || closeSent.has(id)) return;
       await send(app, { type: "load", id, url });
     },
     history: async (label, delta) => {
       const id = idByLabel.get(label);
-      if (id == null) return;
+      if (id == null || closeSent.has(id)) return;
       await send(app, { type: delta < 0 ? "back" : "forward", id });
     },
     close: async (label) => {
+      pluginDbg.closeCalls++;
       const id = idByLabel.get(label);
       if (id == null) return;
+      if (instanceDead) {
+        pluginDbg.instanceDeadSkip++;
+        return;
+      }
       if (pendingClose.has(label)) return;
       {
         const viewId = label.slice("chromium-".length).split("#")[0];
         void viewExistsAnywhere(app, viewId).then((exists) => {
-          if (!exists && pendingClose.has(label)) {
+          if (exists === false && pendingClose.has(label)) {
             void send(app, { type: "hidden", id, hidden: true });
           }
         }).catch(() => {
@@ -13077,10 +13180,15 @@ function makeChromium(app) {
       }
       const t2 = setTimeout(() => {
         void (async () => {
+          pluginDbg.debounceFired++;
           pendingClose.delete(label);
           const viewId = label.slice("chromium-".length).split("#")[0];
-          if (await viewExistsAnywhere(app, viewId)) {
-            void send(app, { type: "hidden", id, hidden: true });
+          const exists = await viewExistsAnywhere(app, viewId);
+          if (exists === true) pluginDbg.existsTrue++;
+          else if (exists === false) pluginDbg.existsFalse++;
+          else pluginDbg.existsNull++;
+          if (exists !== false) {
+            if (exists) void send(app, { type: "hidden", id, hidden: true });
             return;
           }
           idByLabel.delete(label);
@@ -13089,12 +13197,12 @@ function makeChromium(app) {
           persist();
           persistDevtools();
           persistInline();
-          void send(app, { type: "close", id });
+          sendClose(app, id);
           const dtInline = idByLabel.get(`${label}#dt`);
           if (dtInline != null) {
             idByLabel.delete(`${label}#dt`);
             persist();
-            void send(app, { type: "close", id: dtInline });
+            sendClose(app, dtInline);
           }
           for (const [dtLabel, inspected] of devtoolsByLabel) {
             if (inspected === label) {
@@ -13105,6 +13213,7 @@ function makeChromium(app) {
           }
         })();
       }, CLOSE_DEBOUNCE_MS);
+      pluginDbg.debounceSet++;
       pendingClose.set(label, t2);
     },
     // 이벤트 배선 — 엔진 채널 이벤트를 label 단위 콜백으로 demux.
@@ -13266,8 +13375,16 @@ function registerCommands(ctx) {
       ok: true,
       ids: await engineStats(app),
       idMap: idMapSnapshot(),
+      ledger: ledgerSnapshot(),
+      engineDbg: engineDbgSnapshot(),
+      pluginDbg,
       devtoolsMap: devtoolsMapSnapshot()
     })
+  });
+  reg("gc", {
+    description: "Reconcile engine children against this window's ledger \u2014 closes unreferenced leftovers (diagnostics/repair).",
+    message: (d) => d.closed?.length ? `\uC794\uC874 child ${d.closed.length}\uAC1C\uB97C \uD68C\uC218\uD588\uC2B5\uB2C8\uB2E4.` : "\uD68C\uC218\uD560 \uC794\uC874 child \uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.",
+    handler: async () => await runReconcile(app)
   });
   reg("ping", {
     description: "Load/version check \u2014 returns the plugin id and engine (E2E).",
@@ -14273,6 +14390,7 @@ var plugin_entry_default = {
   activate(ctx) {
     const app = ctx.app;
     injectStyles();
+    scheduleOrphanSweep(app);
     if (app.ui?.registerView) {
       ctx.subscriptions.push(
         app.ui.registerView("content", {
@@ -14311,6 +14429,7 @@ var plugin_entry_default = {
     registerCommands(ctx);
   },
   deactivate() {
+    cancelInstanceTimers();
     const s = document.getElementById("sk-browser-style");
     if (s) s.remove();
   }
