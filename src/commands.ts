@@ -1,7 +1,7 @@
 // browser.* 명령 — 내비게이션(navigate/back/forward/reload) + open. 매니페스트 contributes.commands
 // 와 1:1(declared≡actual). CLI/MCP 자동 노출. 엔진 조작은 Chromium 어댑터(app.sidecar 채널)
 // 경유 — 코어 비결합. eval/dom/media 는 엔진 v1 미지원이라 제공하지 않는다(후속: CDP).
-import type { PluginApi, PluginContext } from "./host";
+import { fieldOf, type PluginApi, type PluginContext } from "./host";
 import {
   makeChromium,
   devtoolsLabelFor,
@@ -63,7 +63,7 @@ export async function openDevtoolsTab(
   // "옆에 나란히 분할"로 연다(둘 다 visible = Chrome docked 동형). 여전히 정식 뷰라 드래그로 합치기/
   // 재배치 가능. 열기 직전 활성 그룹 = 대상 브라우저 그룹(버튼/커맨드가 그 뷰를 대상으로 하므로).
   const active = await app.commands?.execute("view.list", {}).catch(() => null);
-  const grp = active && typeof active.groupId === "string" ? active.groupId : null;
+  const grp = fieldOf<string>(active, "panelId") ?? null;
   setPendingDevtools(inspectedLabel, screencast);
   const out = await app.commands
     ?.execute("view.open", { program: "browser-chromium" })
@@ -72,7 +72,7 @@ export async function openDevtoolsTab(
     takePendingDevtools();
     return { ok: false, code: "VIEW_OPEN_FAILED", message: "view.open failed" };
   }
-  const dtViewId = typeof out.viewId === "string" ? out.viewId : null;
+  const dtViewId = fieldOf<string>(out, "viewId") ?? null;
   if (dtViewId && grp) {
     // 대상 옆(오른쪽)으로 분할. 실패해도(단일 뷰 등) 탭으로는 열려 있으니 무해.
     await app.commands
@@ -213,14 +213,27 @@ export function registerCommands(ctx: PluginContext): void {
     message: () => "페이지로 이동했습니다.",
     params: { ...targetParam, url: { type: "string", description: "URL or search terms", required: true } },
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      const viewId = resolveViewId(target);
       const url = normalizeUrl(String(p.url ?? ""));
       // 진행 델타(MESSAGE-PROTOCOL §2) — 엔진 로드는 수 초 걸린다: 무엇을 하는 중인지 흘린다.
       app.events.progress?.("navigate", url); // 델타=URL만(프레임 단어 없음, P0)
       await chromium.navigate(e.label, url);
-      return { ok: true };
+      return { ok: true, viewId };
     },
+    // 이동 직후 자연스러운 다음 수 — 방금 로드한 페이지를 검사(devtools). 대상 뷰가 사라졌으면(희귀
+    // 레이스) 제시하지 않는다.
+    hint: (d) =>
+      typeof d.viewId === "string"
+        ? [
+            {
+              cmd: `sok plugin.soksak-plugin-browser-chromium.devtools '{"viewId":"${d.viewId}"}'`,
+              why: "devtools 로 방금 이동한 페이지를 검사할 수 있습니다.",
+            },
+          ]
+        : [],
   });
 
   reg("back", {
@@ -229,10 +242,11 @@ export function registerCommands(ctx: PluginContext): void {
     message: () => "뒤로 이동했습니다.",
     params: targetParam,
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.history(e.label, -1);
-      return { ok: true };
+      return { ok: true, viewId: resolveViewId(target) };
     },
   });
 
@@ -242,10 +256,11 @@ export function registerCommands(ctx: PluginContext): void {
     message: () => "앞으로 이동했습니다.",
     params: targetParam,
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.history(e.label, 1);
-      return { ok: true };
+      return { ok: true, viewId: resolveViewId(target) };
     },
   });
 
@@ -255,10 +270,11 @@ export function registerCommands(ctx: PluginContext): void {
     message: () => "페이지를 새로고침했습니다.",
     params: targetParam,
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.navigate(e.label, e.getUrl());
-      return { ok: true };
+      return { ok: true, viewId: resolveViewId(target) };
     },
   });
 
@@ -278,17 +294,19 @@ export function registerCommands(ctx: PluginContext): void {
     message: (d) => (d.mode === "inline" ? "DevTools 인라인을 토글했습니다." : "DevTools 를 열었습니다."),
     params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
+      const target = explicitTarget(p);
       const mode = app.settings?.get("devtoolsOpenMode") === "inline" ? "inline" : "tab";
       if (mode === "inline") {
-        const viewId = resolveViewId(explicitTarget(p));
+        const viewId = resolveViewId(target);
         if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
         return toggleInlineDevtools(viewId, scOf(p))
-          ? { ok: true, mode: "inline" }
-          : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted" };
+          ? { ok: true, mode: "inline", viewId }
+          : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted", viewId };
       }
-      const e = resolveEntry(explicitTarget(p));
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
-      return openDevtoolsTab(app, e.label, scOf(p));
+      const out = await openDevtoolsTab(app, e.label, scOf(p));
+      return { ...out, viewId: resolveViewId(target) };
     },
   });
 
@@ -298,11 +316,13 @@ export function registerCommands(ctx: PluginContext): void {
     message: (d) => (d.focused ? "기존 DevTools 탭을 활성화했습니다." : "DevTools 탭을 열었습니다."),
     params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       // DevTools 도 일반 브라우저 뷰다 — 새 뷰가 마운트되며 inspected(e.label)의 DevTools 프론트엔드를
       // 연다. 이후 분할/이동/닫기는 코어 view 커맨드(드래그와 동일 경로)로 동일하게 제어된다.
-      return openDevtoolsTab(app, e.label, scOf(p));
+      const out = await openDevtoolsTab(app, e.label, scOf(p));
+      return { ...out, viewId: resolveViewId(target) };
     },
   });
 
@@ -327,8 +347,8 @@ export function registerCommands(ctx: PluginContext): void {
           ? p.side
           : undefined;
       return toggleInlineDevtools(viewId, scOf(p), side)
-        ? { ok: true, mode: "inline", ...(side ? { side } : {}) }
-        : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted" };
+        ? { ok: true, mode: "inline", viewId, ...(side ? { side } : {}) }
+        : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted", viewId };
     },
   });
 
@@ -347,7 +367,23 @@ export function registerCommands(ctx: PluginContext): void {
         if (url) takePendingUrl();
         return { ok: false, code: "VIEW_OPEN_FAILED", message: "view.open failed" };
       }
-      return { ok: true };
+      const viewId = fieldOf<string>(out, "viewId");
+      return { ok: true, viewId };
     },
+    // 열기 다음의 자연스러운 수 — 실제 주소로 이동하거나 곧장 검사한다. 새 뷰 id 를 못 받은 경우
+    // (드문 응답 형태 변화)는 대상을 특정할 수 없어 제시하지 않는다.
+    hint: (d) =>
+      typeof d.viewId === "string"
+        ? [
+            {
+              cmd: `sok plugin.soksak-plugin-browser-chromium.navigate '{"viewId":"${d.viewId}","url":"https://example.com"}'`,
+              why: "navigate 로 이 브라우저에서 실제 주소로 이동할 수 있습니다.",
+            },
+            {
+              cmd: `sok plugin.soksak-plugin-browser-chromium.devtools '{"viewId":"${d.viewId}"}'`,
+              why: "devtools 로 이 뷰를 검사할 수 있습니다.",
+            },
+          ]
+        : [],
   });
 }

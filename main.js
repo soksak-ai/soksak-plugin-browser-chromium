@@ -12804,6 +12804,14 @@ function t(key, lang) {
   return dict[key] ?? EN[key] ?? key;
 }
 
+// src/host.ts
+function fieldOf(out, key) {
+  if (!out) return void 0;
+  const data = out.data;
+  if (data && typeof data === "object" && key in data) return data[key];
+  return out[key];
+}
+
 // src/orphan-reconcile.ts
 function reconcileOrphans(i) {
   const live = new Set(i.live);
@@ -13008,15 +13016,15 @@ function sendClose(app, id) {
   void send(app, { type: "close", id });
 }
 async function viewExistsAnywhere(app, viewId) {
-  const cl = await app.commands?.execute("content.list", {}).catch(() => null);
+  const cl = await app.commands?.execute("sheet.list", {}).catch(() => null);
   if (cl == null) return null;
-  const contents = (cl.contents || []).map((c) => c.id);
-  for (const content of contents.length ? contents : [void 0]) {
-    const pl = await app.commands?.execute("panel.list", content ? { content } : {}).catch(() => null);
-    const groups = (pl && pl.panels || []).map((g) => g.id);
-    for (const g of groups) {
-      const r = await app.commands?.execute("view.list", { group: g }).catch(() => null);
-      const views = r && r.views || null;
+  const sheets = (fieldOf(cl, "sheets") ?? []).map((c) => c.id);
+  for (const sheet of sheets.length ? sheets : [void 0]) {
+    const pl = await app.commands?.execute("panel.list", sheet ? { sheet } : {}).catch(() => null);
+    const panels = (fieldOf(pl, "panels") ?? []).map((g) => g.id);
+    for (const panel of panels) {
+      const r = await app.commands?.execute("view.list", { panel }).catch(() => null);
+      const views = fieldOf(r, "views") ?? null;
       if (views && views.some((v) => v.id === viewId)) return true;
     }
   }
@@ -13281,14 +13289,14 @@ async function openDevtoolsTab(app, inspectedLabel, screencast) {
     if (out2 && out2.ok) return { ok: true, focused: true };
   }
   const active = await app.commands?.execute("view.list", {}).catch(() => null);
-  const grp = active && typeof active.groupId === "string" ? active.groupId : null;
+  const grp = fieldOf(active, "panelId") ?? null;
   setPendingDevtools(inspectedLabel, screencast);
   const out = await app.commands?.execute("view.open", { program: "browser-chromium" }).catch(() => null);
   if (!out || !out.ok) {
     takePendingDevtools();
     return { ok: false, code: "VIEW_OPEN_FAILED", message: "view.open failed" };
   }
-  const dtViewId = typeof out.viewId === "string" ? out.viewId : null;
+  const dtViewId = fieldOf(out, "viewId") ?? null;
   if (dtViewId && grp) {
     await app.commands?.execute("view.move", { view: dtViewId, dst: grp, zone: "right" }).catch(() => {
     });
@@ -13397,13 +13405,23 @@ function registerCommands(ctx) {
     message: () => "\uD398\uC774\uC9C0\uB85C \uC774\uB3D9\uD588\uC2B5\uB2C8\uB2E4.",
     params: { ...targetParam, url: { type: "string", description: "URL or search terms", required: true } },
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      const viewId = resolveViewId(target);
       const url = normalizeUrl(String(p.url ?? ""));
       app.events.progress?.("navigate", url);
       await chromium.navigate(e.label, url);
-      return { ok: true };
-    }
+      return { ok: true, viewId };
+    },
+    // 이동 직후 자연스러운 다음 수 — 방금 로드한 페이지를 검사(devtools). 대상 뷰가 사라졌으면(희귀
+    // 레이스) 제시하지 않는다.
+    hint: (d) => typeof d.viewId === "string" ? [
+      {
+        cmd: `sok plugin.soksak-plugin-browser-chromium.devtools '{"viewId":"${d.viewId}"}'`,
+        why: "devtools \uB85C \uBC29\uAE08 \uC774\uB3D9\uD55C \uD398\uC774\uC9C0\uB97C \uAC80\uC0AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."
+      }
+    ] : []
   });
   reg("back", {
     description: "Go back in the active browser view's history.",
@@ -13411,10 +13429,11 @@ function registerCommands(ctx) {
     message: () => "\uB4A4\uB85C \uC774\uB3D9\uD588\uC2B5\uB2C8\uB2E4.",
     params: targetParam,
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.history(e.label, -1);
-      return { ok: true };
+      return { ok: true, viewId: resolveViewId(target) };
     }
   });
   reg("forward", {
@@ -13423,10 +13442,11 @@ function registerCommands(ctx) {
     message: () => "\uC55E\uC73C\uB85C \uC774\uB3D9\uD588\uC2B5\uB2C8\uB2E4.",
     params: targetParam,
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.history(e.label, 1);
-      return { ok: true };
+      return { ok: true, viewId: resolveViewId(target) };
     }
   });
   reg("reload", {
@@ -13435,10 +13455,11 @@ function registerCommands(ctx) {
     message: () => "\uD398\uC774\uC9C0\uB97C \uC0C8\uB85C\uACE0\uCE68\uD588\uC2B5\uB2C8\uB2E4.",
     params: targetParam,
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.navigate(e.label, e.getUrl());
-      return { ok: true };
+      return { ok: true, viewId: resolveViewId(target) };
     }
   });
   const screencastParam = {
@@ -13455,15 +13476,17 @@ function registerCommands(ctx) {
     message: (d) => d.mode === "inline" ? "DevTools \uC778\uB77C\uC778\uC744 \uD1A0\uAE00\uD588\uC2B5\uB2C8\uB2E4." : "DevTools \uB97C \uC5F4\uC5C8\uC2B5\uB2C8\uB2E4.",
     params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
+      const target = explicitTarget(p);
       const mode = app.settings?.get("devtoolsOpenMode") === "inline" ? "inline" : "tab";
       if (mode === "inline") {
-        const viewId = resolveViewId(explicitTarget(p));
+        const viewId = resolveViewId(target);
         if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
-        return toggleInlineDevtools(viewId, scOf(p)) ? { ok: true, mode: "inline" } : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted" };
+        return toggleInlineDevtools(viewId, scOf(p)) ? { ok: true, mode: "inline", viewId } : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted", viewId };
       }
-      const e = resolveEntry(explicitTarget(p));
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
-      return openDevtoolsTab(app, e.label, scOf(p));
+      const out = await openDevtoolsTab(app, e.label, scOf(p));
+      return { ...out, viewId: resolveViewId(target) };
     }
   });
   reg("devtools-tab", {
@@ -13472,9 +13495,11 @@ function registerCommands(ctx) {
     message: (d) => d.focused ? "\uAE30\uC874 DevTools \uD0ED\uC744 \uD65C\uC131\uD654\uD588\uC2B5\uB2C8\uB2E4." : "DevTools \uD0ED\uC744 \uC5F4\uC5C8\uC2B5\uB2C8\uB2E4.",
     params: { ...targetParam, ...screencastParam },
     handler: async (p) => {
-      const e = resolveEntry(explicitTarget(p));
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
-      return openDevtoolsTab(app, e.label, scOf(p));
+      const out = await openDevtoolsTab(app, e.label, scOf(p));
+      return { ...out, viewId: resolveViewId(target) };
     }
   });
   reg("devtools-inline", {
@@ -13494,7 +13519,7 @@ function registerCommands(ctx) {
       const viewId = resolveViewId(explicitTarget(p));
       if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       const side = p.side === "top" || p.side === "bottom" || p.side === "left" || p.side === "right" ? p.side : void 0;
-      return toggleInlineDevtools(viewId, scOf(p), side) ? { ok: true, mode: "inline", ...side ? { side } : {} } : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted" };
+      return toggleInlineDevtools(viewId, scOf(p), side) ? { ok: true, mode: "inline", viewId, ...side ? { side } : {} } : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted", viewId };
     }
   });
   reg("open", {
@@ -13511,8 +13536,21 @@ function registerCommands(ctx) {
         if (url) takePendingUrl();
         return { ok: false, code: "VIEW_OPEN_FAILED", message: "view.open failed" };
       }
-      return { ok: true };
-    }
+      const viewId = fieldOf(out, "viewId");
+      return { ok: true, viewId };
+    },
+    // 열기 다음의 자연스러운 수 — 실제 주소로 이동하거나 곧장 검사한다. 새 뷰 id 를 못 받은 경우
+    // (드문 응답 형태 변화)는 대상을 특정할 수 없어 제시하지 않는다.
+    hint: (d) => typeof d.viewId === "string" ? [
+      {
+        cmd: `sok plugin.soksak-plugin-browser-chromium.navigate '{"viewId":"${d.viewId}","url":"https://example.com"}'`,
+        why: "navigate \uB85C \uC774 \uBE0C\uB77C\uC6B0\uC800\uC5D0\uC11C \uC2E4\uC81C \uC8FC\uC18C\uB85C \uC774\uB3D9\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."
+      },
+      {
+        cmd: `sok plugin.soksak-plugin-browser-chromium.devtools '{"viewId":"${d.viewId}"}'`,
+        why: "devtools \uB85C \uC774 \uBDF0\uB97C \uAC80\uC0AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."
+      }
+    ] : []
   });
 }
 

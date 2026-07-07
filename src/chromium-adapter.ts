@@ -2,7 +2,7 @@
 // 엔진 사이드카 채널(app.sidecar → soksak-sidecar-browser-chromium, 계약 soksak-sidecar-browser-spec)로
 // 구현한다. browser-view 의 슬롯추적·URL바·북마크 로직을 그대로 재사용하면서 엔진만 번들 Chromium
 // 으로 바꾼다. 코어 비결합: 코어는 이 메시지들의 의미를 모른다(맹목 relay — docs/SIDECARS.md).
-import type { Disposable, PluginApi, SidecarHandle, WebviewApi } from "./host";
+import { fieldOf, type Disposable, type PluginApi, type SidecarHandle, type WebviewApi } from "./host";
 import { reconcileOrphans } from "./orphan-reconcile";
 
 // label(전역 유일 문자열) → 엔진-로컬 browserId. browser-view 와 commands 가 공유(모듈 싱글턴).
@@ -255,24 +255,24 @@ function sendClose(app: PluginApi, id: number): void {
   void send(app, { type: "close", id });
 }
 
-// 뷰가 워크스페이스 어딘가(활성 프로젝트의 모든 content×그룹)에 존재하는가 — 닫힘 판정의 단일 진실.
-// bare view.list(활성 그룹만)로 판정하면 비활성 그룹/다른 content 의 뷰를 "닫힘"으로 오판해 이동 중
+// 뷰가 워크스페이스 어딘가(활성 프로젝트의 모든 sheet×panel)에 존재하는가 — 닫힘 판정의 단일 진실.
+// bare view.list(활성 panel 만)로 판정하면 비활성 panel/다른 sheet 의 뷰를 "닫힘"으로 오판해 이동 중
 // child 를 파괴한다(페이지 소실·devtools 동반닫힘 오발/불발 — 실측 flake). 비활성 프로젝트 축은 스캔
 // 밖(프로젝트 전환은 언마운트-파킹 경로라 close 판정에 안 옴).
 async function viewExistsAnywhere(app: PluginApi, viewId: string): Promise<boolean | null> {
-  const cl = await app.commands?.execute("content.list", {}).catch(() => null);
+  const cl = await app.commands?.execute("sheet.list", {}).catch(() => null);
   // 조회 자체가 실패(플러그인 dispose 중·부팅 경합)면 "없음"이 아니라 판단 불가(null) — 호출자는
   // 파괴하지 않는다(오판 파괴 = 살아있는 페이지 소실). 실제 "없음"은 조회 성공+미발견일 때만.
   if (cl == null) return null;
-  const contents = ((cl.contents as { id: string }[] | undefined) || []).map((c) => c.id);
-  for (const content of contents.length ? contents : [undefined]) {
+  const sheets = (fieldOf<{ id: string }[]>(cl, "sheets") ?? []).map((c) => c.id);
+  for (const sheet of sheets.length ? sheets : [undefined]) {
     const pl = await app.commands
-      ?.execute("panel.list", content ? { content } : {})
+      ?.execute("panel.list", sheet ? { sheet } : {})
       .catch(() => null);
-    const groups = ((pl && (pl.panels as { id: string }[] | undefined)) || []).map((g) => g.id);
-    for (const g of groups) {
-      const r = await app.commands?.execute("view.list", { group: g }).catch(() => null);
-      const views = (r && (r.views as { id: string }[] | undefined)) || null;
+    const panels = (fieldOf<{ id: string }[]>(pl, "panels") ?? []).map((g) => g.id);
+    for (const panel of panels) {
+      const r = await app.commands?.execute("view.list", { panel }).catch(() => null);
+      const views = fieldOf<{ id: string }[]>(r, "views") ?? null;
       if (views && views.some((v) => v.id === viewId)) return true;
     }
   }

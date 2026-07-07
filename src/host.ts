@@ -29,6 +29,22 @@ export interface ParamSpec {
   required?: boolean;
 }
 
+// 후속 명령 후보(제시) — 코어 CommandHint 와 동형. cmd=제안 명령줄, why=왜 유용한지 한 줄.
+// 지시가 아니라 가능성의 제시 — 받은 쪽(사람·AI)이 무시해도, 다른 수를 둬도 된다.
+export interface CommandHint {
+  cmd: string;
+  why: string;
+}
+
+// 호출자 컨텍스트 — 코어 CommandContext 와 동형(플러그인이 쓰는 부분만).
+export interface CommandContext {
+  pane?: string;
+  remote?: boolean;
+  window?: { label: string };
+  parent?: string;
+  origin?: string;
+}
+
 export interface PluginCommandSpec {
   description: string;
   triggers?: Record<string, string>;
@@ -36,12 +52,23 @@ export interface PluginCommandSpec {
   returns?: string;
   // 성공 결과를 한 문장으로 요약(활동 스트림 발화). d = 핸들러의 성공 data.
   message?: (data: any) => string;
+  // 성공 hint(제시) — 이 명령이 통했을 때 다음에 둘 만한 수를 제시한다(최대 3, 코어가 자른다).
+  hint?: (data: Record<string, unknown>, ctx: CommandContext) => CommandHint[];
   handler: (params: Record<string, unknown>) => Promise<object> | object;
 }
 
 export interface CommandOutcome {
   ok: boolean;
   [k: string]: unknown;
+}
+
+// 코어 명령 결과 필드 읽기 — 응답 봉투(M1, {ok,code,message,data})는 핸들러가 반환한 필드를 data
+// 아래 중첩한다. 과거 평면 응답과도 호환되도록 양쪽을 본다(선례: soksak-plugin-activity).
+export function fieldOf<T>(out: CommandOutcome | null | undefined, key: string): T | undefined {
+  if (!out) return undefined;
+  const data = out.data as Record<string, unknown> | undefined;
+  if (data && typeof data === "object" && key in data) return data[key] as T;
+  return out[key] as T | undefined;
 }
 
 // app.webview — 코어 네이티브 child webview(WKWebView) 구동.
