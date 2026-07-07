@@ -8,6 +8,10 @@ import {
   engineStats,
   devtoolsMapSnapshot,
   idMapSnapshot,
+  ledgerSnapshot,
+  runReconcile,
+  engineDbgSnapshot,
+  pluginDbg,
 } from "./chromium-adapter";
 
 // 새 브라우저 탭을 열 때 mount 가 homeUrl 대신 소비할 "대기 URL".
@@ -184,8 +188,17 @@ export function registerCommands(ctx: PluginContext): void {
       ok: true,
       ids: await engineStats(app),
       idMap: idMapSnapshot(),
+      ledger: ledgerSnapshot(),
+      engineDbg: engineDbgSnapshot(),
+      pluginDbg,
       devtoolsMap: devtoolsMapSnapshot(),
     }),
+  });
+
+  reg("gc", {
+    description: "Reconcile engine children against this window's ledger — closes unreferenced leftovers (diagnostics/repair).",
+    message: (d) => ((d.closed as number[] | undefined)?.length ? `잔존 child ${(d.closed as number[]).length}개를 회수했습니다.` : "회수할 잔존 child 가 없습니다."),
+    handler: async () => await runReconcile(app),
   });
 
   reg("ping", {

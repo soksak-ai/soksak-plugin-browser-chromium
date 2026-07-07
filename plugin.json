@@ -208,6 +208,13 @@
         }
       },
       {
+        "name": "gc",
+        "title": {
+          "ko": "잔존 child 회수",
+          "en": "Reclaim leftover engine children"
+        }
+      },
+      {
         "name": "devtools-tab",
         "title": {
           "ko": "개발자 도구 독립 탭으로 열기",

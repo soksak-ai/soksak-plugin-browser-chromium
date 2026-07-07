@@ -174,7 +174,7 @@ function BrowserViewImpl({
   const areaRef = useRef<HTMLDivElement>(null);
   // inline DevTools(같은 탭 내부 분할) — { ratio: 분할축 페이지 몫, side: 도킹 방향 }, null = 닫힘.
   // 재마운트는 어댑터 마커에서 복원(이동·reload 생존). 토글 오프는 child 를 파킹(어댑터 판정이
-  // 호스트 뷰 존재를 보고 보존) — 다시 켜면 입양으로 DevTools 상태가 그대로 살아난다.
+  // 호스트 뷰 존재를 보고 보존) — 다시 켜면 재사용으로 DevTools 상태가 그대로 살아난다.
   const [inlineDt, setInlineDt] = useState<InlineMark | null>(() =>
     label ? inlineMarkOf(label) : null,
   );
@@ -809,7 +809,7 @@ function BrowserViewImpl({
 // 호스트 뷰 안의 두 번째 홀(.bv-dt-area)에 DevTools child(label "#dt")를 정렬한다. 호스트의
 // bounds 추종과 동일 패턴(자가종료 rAF + ResizeObserver + IntersectionObserver)의 축약본.
 // 언마운트(토글 오프/뷰 닫힘/이동) 시 close — 어댑터 판정이 호스트 뷰 존재를 보고 파킹/파괴를
-// 가른다(토글 오프 = 파킹 → 재토글 시 입양으로 DevTools 상태 보존).
+// 가른다(토글 오프 = 파킹 → 재토글 시 재사용으로 DevTools 상태 보존).
 function InlineDevtools({
   app,
   webview,

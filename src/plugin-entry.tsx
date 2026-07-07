@@ -2,6 +2,7 @@
 // 콘텐츠 뷰 "content" 를 등록 → BrowserView 를 마운트.
 import { createRoot, type Root } from "react-dom/client";
 import { BrowserView } from "./browser-view";
+import { cancelInstanceTimers, scheduleOrphanSweep } from "./chromium-adapter";
 import { injectStyles } from "./styles";
 import { registerCommands, takePendingUrl, takePendingDevtools } from "./commands";
 import type { PluginContext, PluginViewContext } from "./host";
@@ -35,6 +36,10 @@ export default {
   activate(ctx: PluginContext) {
     const app = ctx.app;
     injectStyles();
+    // 잔존 child 회수는 activate 가 예약한다 — 첫 뷰 mount 에서만 예약하면, 이전 인스턴스의
+    // child 가 뷰 없이 남은 경우(콘텐츠 닫힘 후 reload) 아무도 sweep 을 돌리지 않아 유령이
+    // 영구 잔존한다(실측 — 옛 크기 surface 가 화면을 덮음).
+    scheduleOrphanSweep(app);
 
     if (app.ui?.registerView) {
       ctx.subscriptions.push(
@@ -82,6 +87,10 @@ export default {
     registerCommands(ctx);
   },
   deactivate() {
+    // 이 인스턴스가 예약한 타이머(close 디바운스 파괴·sweep)를 소거 — 남겨두면 reload 뒤 stale
+    // 클로저가 발화해 sessionStorage(다음 인스턴스의 매핑/장부)를 덮어쓴다(재사용 인계 실패의 근원).
+    // child 와 매핑은 남긴다: 다음 인스턴스가 재사용(페이지 보존)하거나 reconcile 이 회수한다.
+    cancelInstanceTimers();
     const s = document.getElementById("sk-browser-style");
     if (s) s.remove();
   },
