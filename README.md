@@ -10,7 +10,7 @@ an in-process module that owns a native child view composited into a DOM hole. T
 plugin drives that engine over the sidecar protocol and provides the surrounding
 browser interface and settings. Rendering is windowed (the engine paints its own
 view); the same engine also offers an offscreen mode consumed by
-`soksak-plugin-browser-osr`.
+`soksak-plugin-browser-chromium-offscreen`.
 
 ## Usage
 
