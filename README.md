@@ -1,19 +1,24 @@
-# soksak-plugin-browser
+# soksak-plugin-browser-chromium
 
-A web browser for soksak, backed by the operating system's native web view. It opens a
-browser — address bar, back/forward/reload, bookmarks, developer tools — as a content tab
-and adds a **Browser** item to the new-tab (+) menu.
+A web browser for soksak backed by a bundled Chromium (CEF) engine, not the
+operating system web view. It opens a browser — address bar, back/forward/reload,
+bookmarks, developer tools — as a content tab and adds a **Browser (Chromium)**
+item to the new-tab (+) menu.
 
-The web view is provided by soksak's core (`app.webview.*`); a plugin cannot create one. This
-plugin drives the web view and provides the surrounding browser interface and settings.
+The engine runs as the `browser-chromium` sidecar (`soksak-sidecar-browser-spec`),
+an in-process module that owns a native child view composited into a DOM hole. This
+plugin drives that engine over the sidecar protocol and provides the surrounding
+browser interface and settings. Rendering is windowed (the engine paints its own
+view); the same engine also offers an offscreen mode consumed by
+`soksak-plugin-browser-osr`.
 
 ## Usage
 
-From the + menu (**Browser**), or:
+From the + menu (**Browser (Chromium)**), or:
 
 ```bash
-sok view.open '{"program":"browser"}'
-sok plugin.soksak-plugin-browser.navigate '{"url":"https://example.com"}'
+sok view.open '{"program":"browser-chromium"}'
+sok plugin.soksak-plugin-browser-chromium.navigate '{"url":"https://example.com"}'
 ```
 
 A new tab opens at `homeUrl`.
@@ -24,15 +29,18 @@ A new tab opens at `homeUrl`.
 |---|---|---|
 | `homeUrl` | `about:blank` | address a new tab opens to |
 | `browserNewWindow` | `tab` | open `target=_blank` / `window.open` links in a new tab or a new window |
+| `devtoolsScreencast` | `false` | show the inspected page preview inside DevTools |
+| `devtoolsOpenMode` | `tab` | open DevTools as an independent tab or split inside the browser view |
 
 ## Commands
 
-- Navigation: `navigate`, `back`, `forward`, `reload`, `open`, `devtools`, `list`
-- Page automation: `eval`, `dom.text` / `dom.html` / `dom.query` / `dom.click` / `dom.fill` / `dom.submit` / `dom.wait-for`, `media.sniff` / `media.extract`
+- Navigation: `navigate`, `back`, `forward`, `reload`, `open`
+- DevTools: `devtools`, `devtools-tab`, `devtools-inline`
+- Diagnostics: `ping`, `stats` (live engine child ids), `gc` (reap unreferenced engine children)
 
 ```bash
-sok plugin.soksak-plugin-browser.navigate '{"url":"https://example.com"}'
-sok plugin.soksak-plugin-browser.dom.text  '{"selector":"h1"}'
+sok plugin.soksak-plugin-browser-chromium.navigate '{"url":"https://example.com"}'
+sok plugin.soksak-plugin-browser-chromium.stats
 ```
 
 Each acts on the active browser; pass `viewId` to target a specific one.
@@ -42,8 +50,8 @@ Each acts on the active browser; pass `viewId` to target a specific one.
 | permission | for |
 |---|---|
 | `ui` | the content view |
-| `commands` | the commands above |
+| `commands` / `commands:destructive` | the commands above (`gc` is destructive) |
 | `programs` | the + menu entry |
-| `webview` | driving the web view (`app.webview.*`) |
-| `network` | loading pages |
+| `sidecar` | driving the `browser-chromium` engine |
+| `webview` | the DOM-hole host cell the engine view composites into |
 | `data` | storing bookmarks |
