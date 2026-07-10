@@ -14254,7 +14254,8 @@ function BrowserViewImpl({
       setNav({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
     });
     const d4 = webview.on(label, "favicon", (p) => {
-      if (typeof p.url === "string") ctx.setIcon?.(p.url);
+      if (typeof p.url !== "string") return;
+      ctx.setIcon?.(p.url === "data:," ? "" : p.url);
     });
     return () => {
       d1.dispose();
