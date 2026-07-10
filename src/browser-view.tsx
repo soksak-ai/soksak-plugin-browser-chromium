@@ -543,7 +543,9 @@ function BrowserViewImpl({
     });
     // 파비콘 — title 동형의 콘텐츠 사실. 빈 url 도 보고(이전 페이지 stale 아이콘 해제).
     const d4 = webview.on(label, "favicon", (p) => {
-      if (typeof p.url === "string") ctx.setIcon?.(p.url);
+      if (typeof p.url !== "string") return;
+      // CEF 는 파비콘 없는 페이지에 "data:," 를 준다 — 사실은 "없음"이므로 해제로 정규화.
+      ctx.setIcon?.(p.url === "data:," ? "" : p.url);
     });
     return () => {
       d1.dispose();
