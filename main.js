@@ -12769,6 +12769,96 @@ function renderNavState(s) {
   };
 }
 
+// ../../../ai/cli/soksak-browser-kit/src/toolbar.ts
+function btn(node, label, title) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.setAttribute("data-node", node);
+  b.textContent = label;
+  b.title = title;
+  b.style.cssText = "flex:0 0 auto;width:30px;height:30px;border-radius:6px;border:0;background:var(--color-background,#111);color:var(--color-text,#eee);font:15px system-ui;cursor:pointer";
+  return b;
+}
+function createBrowserToolbar(container, cb) {
+  const bar = document.createElement("div");
+  bar.setAttribute("data-node", "toolbar");
+  bar.style.cssText = "position:relative;display:flex;gap:4px;padding:6px;flex:0 0 auto;align-items:center;background:var(--color-background-soft,#222)";
+  const back = btn("back", "\u2039", "\uB4A4\uB85C");
+  const forward = btn("forward", "\u203A", "\uC55E\uC73C\uB85C");
+  const reload = btn("reload", "\u27F3", "\uC0C8\uB85C\uACE0\uCE68");
+  const home = btn("home", "\u2302", "\uD648");
+  const url = document.createElement("input");
+  url.setAttribute("data-node", "urlbar");
+  url.type = "text";
+  url.placeholder = "URL \uB610\uB294 \uAC80\uC0C9\uC5B4";
+  url.style.cssText = "flex:1 1 auto;padding:6px 10px;border-radius:6px;border:1px solid var(--color-border,#444);background:var(--color-background,#111);color:var(--color-text,#eee);font:13px system-ui";
+  const go = btn("go", "\u21B5", "\uC774\uB3D9");
+  go.style.background = "var(--color-accent,#3b82f6)";
+  go.style.color = "#fff";
+  const star = btn("bookmark", "\u2606", "\uBD81\uB9C8\uD06C");
+  const extraSlot = document.createElement("div");
+  extraSlot.setAttribute("data-node", "extra");
+  extraSlot.style.cssText = "display:flex;gap:4px;flex:0 0 auto;align-items:center";
+  const progress = document.createElement("div");
+  progress.setAttribute("data-node", "progress");
+  progress.style.cssText = "position:absolute;left:0;bottom:0;height:2px;width:0;background:var(--color-accent,#3b82f6);transition:width .25s ease-out;opacity:0";
+  bar.append(back, forward, reload, home, url, go, star, extraSlot, progress);
+  container.appendChild(bar);
+  let nav = initialNavState;
+  const apply = () => {
+    const r = renderNavState(nav);
+    reload.textContent = r.reloadGlyph;
+    reload.title = r.reloadAction === "stop" ? "\uC815\uC9C0" : "\uC0C8\uB85C\uACE0\uCE68";
+    progress.style.opacity = r.progressVisible ? "1" : "0";
+    progress.style.width = `${r.progressWidth}%`;
+    back.style.opacity = r.backEnabled ? "1" : "0.35";
+    forward.style.opacity = r.forwardEnabled ? "1" : "0.35";
+  };
+  apply();
+  back.addEventListener("click", () => {
+    if (renderNavState(nav).backEnabled) cb.onBack();
+  });
+  forward.addEventListener("click", () => {
+    if (renderNavState(nav).forwardEnabled) cb.onForward();
+  });
+  reload.addEventListener("click", () => {
+    if (renderNavState(nav).reloadAction === "stop") cb.onStop();
+    else cb.onReload();
+  });
+  home.addEventListener("click", () => cb.onHome());
+  go.addEventListener("click", () => cb.onNavigate(url.value));
+  url.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) {
+      cb.onNavigate(url.value);
+      url.blur();
+    }
+  });
+  star.addEventListener("click", () => cb.onBookmarkToggle());
+  return {
+    root: bar,
+    extraSlot,
+    setUrl(u) {
+      if (document.activeElement !== url) url.value = u;
+    },
+    getInput() {
+      return url.value;
+    },
+    setNavState(s) {
+      nav = s;
+      apply();
+    },
+    setBookmarked(on) {
+      star.textContent = on ? "\u2605" : "\u2606";
+    },
+    dispose() {
+      bar.remove();
+    }
+  };
+}
+
+// src/browser-view.tsx
+var import_react_dom = __toESM(require_react_dom(), 1);
+
 // src/bounds-follow.ts
 function followShouldContinue(i) {
   return i.live || i.gesture || i.stableFrames < i.stopAfter;
@@ -13608,9 +13698,6 @@ function registerCommands(ctx) {
 
 // src/browser-view.tsx
 var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
-function isComposingEnter(e) {
-  return e.key === "Enter" && (e.nativeEvent.isComposing || e.keyCode === 229);
-}
 var LIVE_THROTTLE_MS = 32;
 var dtDividerDragActive = false;
 var STABLE_STOP_FRAMES = 4;
@@ -13620,24 +13707,6 @@ function normalizeUrl3(input) {
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) return s;
   if (!s.includes(" ") && s.includes(".")) return `https://${s}`;
   return `https://www.google.com/search?q=${encodeURIComponent(s)}`;
-}
-function IconBack() {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("polyline", { points: "15 18 9 12 15 6" }) });
-}
-function IconForward() {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("polyline", { points: "9 18 15 12 9 6" }) });
-}
-function IconReload() {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("polyline", { points: "23 4 23 10 17 10" }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M20.49 15a9 9 0 1 1-2.12-9.36L23 10" })
-  ] });
-}
-function IconStarFilled() {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { viewBox: "0 0 24 24", fill: "currentColor", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("polygon", { points: "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" }) });
-}
-function IconStar() {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("polygon", { points: "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" }) });
 }
 function IconMenu() {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
@@ -13752,11 +13821,45 @@ function BrowserViewImpl({
   const lastVisibleRef = (0, import_react.useRef)(true);
   const [localUrl, setLocalUrl] = (0, import_react.useState)(initialUrl);
   const localUrlRef = (0, import_react.useRef)(initialUrl);
-  const [input, setInput] = (0, import_react.useState)(initialUrl);
   const [bmOpen, setBmOpen] = (0, import_react.useState)(false);
   const [nav, setNav] = (0, import_react.useState)(initialNavState);
+  const tbHostRef = (0, import_react.useRef)(null);
+  const [tb, setTb] = (0, import_react.useState)(null);
+  const tbCbRef = (0, import_react.useRef)({
+    onNavigate: (_raw) => {
+    },
+    onBack: () => {
+    },
+    onForward: () => {
+    },
+    onReload: () => {
+    },
+    onStop: () => {
+    },
+    onHome: () => {
+    },
+    onBookmarkToggle: () => {
+    }
+  });
+  (0, import_react.useEffect)(() => {
+    const host = tbHostRef.current;
+    if (!host) return;
+    const t2 = createBrowserToolbar(host, {
+      onNavigate: (raw) => tbCbRef.current.onNavigate(raw),
+      onBack: () => tbCbRef.current.onBack(),
+      onForward: () => tbCbRef.current.onForward(),
+      onReload: () => tbCbRef.current.onReload(),
+      onStop: () => tbCbRef.current.onStop(),
+      onHome: () => tbCbRef.current.onHome(),
+      onBookmarkToggle: () => tbCbRef.current.onBookmarkToggle()
+    });
+    setTb(t2);
+    return () => {
+      setTb(null);
+      t2.dispose();
+    };
+  }, []);
   const [bookmarks, setBookmarks] = (0, import_react.useState)([]);
-  const inputFocusRef = (0, import_react.useRef)(false);
   (0, import_react.useEffect)(() => {
     if (!app.data) return;
     let cancelled = false;
@@ -13784,7 +13887,6 @@ function BrowserViewImpl({
   }, [app.data]);
   (0, import_react.useEffect)(() => {
     localUrlRef.current = localUrl;
-    if (!inputFocusRef.current) setInput(localUrl);
   }, [localUrl]);
   const syncBounds = (0, import_react.useCallback)(
     (force = false) => {
@@ -14006,6 +14108,32 @@ function BrowserViewImpl({
       await app.data.kv.set(key, { url: localUrl, title });
     }
   }, [app.data, localUrl, isBookmarked]);
+  tbCbRef.current = {
+    onNavigate: (raw) => navigate(raw),
+    onBack: () => {
+      if (label && webview) void webview.history(label, -1);
+    },
+    onForward: () => {
+      if (label && webview) void webview.history(label, 1);
+    },
+    onReload: () => {
+      if (label && webview) void webview.navigate(label, localUrlRef.current);
+    },
+    onStop: () => {
+      if (label && webview) void webview.stop?.(label);
+    },
+    onHome: () => navigate(String(app.settings.get("homeUrl") ?? "about:blank")),
+    onBookmarkToggle: () => void toggleBookmark()
+  };
+  (0, import_react.useEffect)(() => {
+    tb?.setUrl(localUrl);
+  }, [tb, localUrl]);
+  (0, import_react.useEffect)(() => {
+    tb?.setNavState(nav);
+  }, [tb, nav]);
+  (0, import_react.useEffect)(() => {
+    tb?.setBookmarked(isBookmarked);
+  }, [tb, isBookmarked]);
   if (!label || !webview) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "browser-view" });
   }
@@ -14013,151 +14141,50 @@ function BrowserViewImpl({
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "browser-view", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-area", ref: areaRef }) });
   }
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "browser-view", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "bv-bar", style: { position: "relative" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          type: "button",
-          className: "bv-btn",
-          title: t("back", lang),
-          "data-node": "back",
-          style: { opacity: renderNavState(nav).backEnabled ? 1 : 0.35 },
-          onClick: () => {
-            if (renderNavState(nav).backEnabled) void webview.history(label, -1);
-          },
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconBack, {})
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          type: "button",
-          className: "bv-btn",
-          title: t("forward", lang),
-          "data-node": "forward",
-          style: { opacity: renderNavState(nav).forwardEnabled ? 1 : 0.35 },
-          onClick: () => {
-            if (renderNavState(nav).forwardEnabled) void webview.history(label, 1);
-          },
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconForward, {})
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          type: "button",
-          className: "bv-btn",
-          title: renderNavState(nav).reloadAction === "stop" ? t("stop", lang) : t("reload", lang),
-          "data-node": "reload",
-          onClick: () => {
-            if (renderNavState(nav).reloadAction === "stop") void webview.stop?.(label);
-            else void webview.navigate(label, localUrl);
-          },
-          children: renderNavState(nav).reloadAction === "stop" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-hidden": true, children: "\u2715" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconReload, {})
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          type: "button",
-          className: "bv-btn",
-          title: t("home", lang),
-          "data-node": "home",
-          onClick: () => navigate(String(app.settings.get("homeUrl") ?? "about:blank")),
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-hidden": true, children: "\u2302" })
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "input",
-        {
-          className: "bv-url",
-          value: input,
-          spellCheck: false,
-          placeholder: t("urlPlaceholder", lang),
-          "data-node": "urlbar",
-          onFocus: () => {
-            inputFocusRef.current = true;
-          },
-          onBlur: () => {
-            inputFocusRef.current = false;
-            setInput(localUrl);
-          },
-          onChange: (e) => setInput(e.target.value),
-          onKeyDown: (e) => {
-            if (isComposingEnter(e)) return;
-            if (e.key === "Enter") {
-              e.preventDefault();
-              navigate(input);
-              e.currentTarget.blur();
-            }
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { ref: tbHostRef, style: { flex: "0 0 auto" } }),
+    tb && (0, import_react_dom.createPortal)(
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            type: "button",
+            className: `bv-btn${inlineDt != null || dtTabOpen ? " on" : ""}`,
+            title: t("inspect", lang),
+            "data-node": "devtools",
+            onClick: () => {
+              if (app.settings?.get("devtoolsOpenMode") === "inline") toggleInline();
+              else void openDevtoolsTab(app, label);
+            },
+            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconTerminal, {})
           }
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "div",
-        {
-          "data-node": "progress",
-          style: {
-            position: "absolute",
-            left: 0,
-            bottom: 0,
-            height: 2,
-            background: "var(--color-accent, #3b82f6)",
-            transition: "width .25s ease-out",
-            opacity: renderNavState(nav).progressVisible ? 1 : 0,
-            width: `${renderNavState(nav).progressWidth}%`
+        ),
+        inlineDt != null && ["bottom", "top", "left", "right"].map((sd) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            type: "button",
+            className: `bv-btn${inlineDt.side === sd ? " on" : ""}`,
+            title: t(`dock${sd[0].toUpperCase()}${sd.slice(1)}`, lang),
+            "data-node": `dock-${sd}/${ctx.viewId ?? "solo"}`,
+            onClick: () => {
+              if (inlineDt.side !== sd) toggleInline(void 0, sd);
+            },
+            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconDock, { side: sd })
+          },
+          sd
+        )),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            type: "button",
+            className: `bv-btn${bmOpen ? " on" : ""}`,
+            title: t("bookmarks", lang),
+            onClick: () => setBmOpen((o) => !o),
+            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconMenu, {})
           }
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          type: "button",
-          className: `bv-btn${inlineDt != null || dtTabOpen ? " on" : ""}`,
-          title: t("inspect", lang),
-          "data-node": "devtools",
-          onClick: () => {
-            if (app.settings?.get("devtoolsOpenMode") === "inline") toggleInline();
-            else void openDevtoolsTab(app, label);
-          },
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconTerminal, {})
-        }
-      ),
-      inlineDt != null && ["bottom", "top", "left", "right"].map((sd) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          type: "button",
-          className: `bv-btn${inlineDt.side === sd ? " on" : ""}`,
-          title: t(`dock${sd[0].toUpperCase()}${sd.slice(1)}`, lang),
-          "data-node": `dock-${sd}/${ctx.viewId ?? "solo"}`,
-          onClick: () => {
-            if (inlineDt.side !== sd) toggleInline(void 0, sd);
-          },
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconDock, { side: sd })
-        },
-        sd
-      )),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          type: "button",
-          className: `bv-btn${isBookmarked ? " on" : ""}`,
-          title: t("bookmark", lang),
-          onClick: () => void toggleBookmark(),
-          children: isBookmarked ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconStarFilled, {}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconStar, {})
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          type: "button",
-          className: `bv-btn${bmOpen ? " on" : ""}`,
-          title: t("bookmarks", lang),
-          onClick: () => setBmOpen((o) => !o),
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconMenu, {})
-        }
-      )
-    ] }),
+        )
+      ] }),
+      tb.extraSlot
+    ),
     bmOpen && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "bv-bm-list", children: [
       bookmarks.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-bm-empty", children: t("noBookmarks", lang) }),
       bookmarks.map((b) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
