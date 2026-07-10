@@ -18,6 +18,8 @@ export interface PluginViewContext {
   setBadge: (badge: number | "dot" | null) => void;
   setStatus: (status: { code: string; message?: string } | null) => void;
   setTitle: (title: string) => void;
+  // 탭 아이콘(콘텐츠 사실 — 파비콘 URL). 빈 값 = 해제(매니페스트 아이콘 폴백).
+  setIcon?: (icon: string) => void;
   // 플러그인 관찰 상태 보고(B3) — 뷰 레코드 영속(뷰와 수명 동기). kv 에 viewId 키 영속 금지.
   setRestoreState?: (state: unknown) => void;
 }
@@ -115,11 +117,11 @@ export interface WebviewApi {
     code: string,
     phase?: "document-start" | "document-end",
   ) => Disposable;
-  /** webview 이벤트 구독: "nav"({url})·"title"({title})·"status"·"open-external"({url})·
+  /** webview 이벤트 구독: "nav"({url})·"title"({title})·"favicon"({url})·"status"·"open-external"({url})·
    *  "loading"({loading,canBack,canForward} — 스피너/정지 토글·뒤로/앞으로 활성). 반환=해지. */
   on: (
     label: string,
-    event: "nav" | "title" | "status" | "open-external" | "loading",
+    event: "nav" | "title" | "favicon" | "status" | "open-external" | "loading",
     cb: (payload: Record<string, unknown>) => void,
   ) => Disposable;
   /** 현재 살아있는 webview label 목록(prefix 필터). GC/정리용. */

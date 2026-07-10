@@ -541,10 +541,15 @@ function BrowserViewImpl({
     const d3 = webview.on(label, "loading", (p) => {
       setNav({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
     });
+    // 파비콘 — title 동형의 콘텐츠 사실. 빈 url 도 보고(이전 페이지 stale 아이콘 해제).
+    const d4 = webview.on(label, "favicon", (p) => {
+      if (typeof p.url === "string") ctx.setIcon?.(p.url);
+    });
     return () => {
       d1.dispose();
       d2.dispose();
       d3.dispose();
+      d4.dispose();
     };
   }, [label, webview, ctx]);
 

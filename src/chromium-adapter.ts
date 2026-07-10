@@ -35,6 +35,9 @@ function persist(): void {
 }
 
 const idByLabel = loadPersisted();
+// eval 왕복 대기(evalId → resolve) — eval-result 이벤트(스펙 §8)로 완결된다.
+const pendingEvals = new Map<number, (r: { ok: boolean; value: unknown }) => void>();
+let evalWired = false;
 
 // [유령 child 방지 — 생성 장부] 이 창이 만든 엔진 child id 의 매핑-독립 장부. 매핑(idByLabel)은 close
 // 디바운스가 지우는데, 그 뒤 실제 파괴(send close)가 실패·증발하면(플러그인 reload 가 타이머를
@@ -541,7 +544,7 @@ export function makeChromium(app: PluginApi): WebviewApi {
     //   소비자 가정으로 수용). "새 창" 모드는 엔진이 네이티브 팝업으로 직접 처리.
     on: (label, event, cb) => {
       const engineEvent =
-        event === "open-external" ? "popup-url" : event === "nav" || event === "title" || event === "loading" ? event : null;
+        event === "open-external" ? "popup-url" : event === "nav" || event === "title" || event === "loading" || event === "favicon" ? event : null;
       if (!engineEvent) return noop;
       let un: Disposable | null = null;
       let disposed = false;
@@ -553,7 +556,7 @@ export function makeChromium(app: PluginApi): WebviewApi {
             // 동일 — 구독자(뷰)마다 콜백이 불리므로 느슨한 창-소유 필터는 뷰 수만큼 탭을
             // 중복 생성한다(실측: 뷰 7개 → 새 탭 7개). 소스 뷰 하나만 연다.
             if (src == null || idByLabel.get(label) !== src) return;
-            if (engineEvent === "popup-url") cb({ url: p.url });
+            if (engineEvent === "popup-url" || engineEvent === "favicon") cb({ url: p.url });
             else if (engineEvent === "loading")
               cb({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
             else cb(engineEvent === "nav" ? { url: p.url } : { title: p.title });
@@ -571,7 +574,37 @@ export function makeChromium(app: PluginApi): WebviewApi {
     },
     // 나머지 v1 미지원 — 안전한 no-op. openWindow 는 "새 창" 모드를 엔진이 네이티브로 처리하므로 불요.
     openWindow: async () => {},
-    eval: async () => "",
+    // 페이지 JS 실행(엔진 eval verb, 스펙 §8) — body 는 async 함수 본문, JSON 직렬화 값을 return.
+    // 결과는 eval-result 이벤트로 회수한다. WebviewApi.eval 의 문자열 계약(native/WKWebView 유래)과
+    // 맞추기 위해 값을 JSON 문자열로 돌려준다 — 소비자(evalJson 류)가 JSON.parse 한다.
+    eval: async (label: string, body: string): Promise<string> => {
+      const id = idByLabel.get(label);
+      if (id == null) throw new Error(`no engine child for ${label}`);
+      const h = await engine(app);
+      if (!evalWired) {
+        evalWired = true;
+        h.on("eval-result", (p) => {
+          const cb = typeof p.evalId === "number" ? pendingEvals.get(p.evalId as number) : undefined;
+          if (cb) cb({ ok: !!p.ok, value: p.value });
+        });
+      }
+      const out = await h.send({ type: "eval", id, js: body });
+      const evalId = (out as { evalId?: number }).evalId;
+      if (typeof evalId !== "number") throw new Error(String((out as { error?: string }).error ?? "eval 실패"));
+      const r = await new Promise<{ ok: boolean; value: unknown }>((resolve) => {
+        const t = setTimeout(() => {
+          pendingEvals.delete(evalId);
+          resolve({ ok: false, value: "eval 응답 시간 초과" });
+        }, 15000);
+        pendingEvals.set(evalId, (res) => {
+          clearTimeout(t);
+          pendingEvals.delete(evalId);
+          resolve(res);
+        });
+      });
+      if (!r.ok) throw new Error(String(r.value));
+      return JSON.stringify(r.value === undefined ? null : r.value);
+    },
     injectScript: () => noop,
     list: async (prefix?: string) =>
       [...idByLabel.keys()].filter((l) => !prefix || l.startsWith(prefix)),

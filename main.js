@@ -12856,6 +12856,64 @@ function createBrowserToolbar(container, cb) {
   };
 }
 
+// ../../kits/soksak-kit-browser-common/src/dom-snippets.ts
+var jsStr = (s) => JSON.stringify(s);
+function domTextBody(selector, maxLength = 2e4) {
+  return selector ? `const el = document.querySelector(${jsStr(selector)}); return el ? el.innerText.slice(0, ${maxLength}) : null;` : `return document.body.innerText.slice(0, ${maxLength});`;
+}
+function domHtmlBody(selector, maxLength = 2e4) {
+  return selector ? `const el = document.querySelector(${jsStr(selector)}); return el ? el.outerHTML.slice(0, ${maxLength}) : null;` : `return document.documentElement.outerHTML.slice(0, ${maxLength});`;
+}
+function domQueryBody(selector, limit = 20) {
+  return `
+          const all = [...document.querySelectorAll(${jsStr(selector)})];
+          return { count: all.length, elements: all.slice(0, ${limit}).map(e => ({
+            tag: e.tagName.toLowerCase(),
+            text: (e.innerText || "").trim().slice(0, 120) || undefined,
+            id: e.id || undefined,
+            class: (typeof e.className === "string" && e.className) || undefined,
+            name: e.getAttribute("name") || undefined,
+            href: e.getAttribute("href") || undefined,
+            type: e.getAttribute("type") || undefined,
+            value: e.value !== undefined ? String(e.value).slice(0, 120) : undefined,
+          })) };`;
+}
+function domClickBody(selector) {
+  return `const el = document.querySelector(${jsStr(selector)}); if (!el) return { clicked: false, reason: "selector \uB9E4\uCE6D \uC5C6\uC74C" }; el.click(); return { clicked: true };`;
+}
+function domFillBody(selector, text) {
+  return `
+          const el = document.querySelector(${jsStr(selector)});
+          if (!el) return { filled: false, reason: "selector \uB9E4\uCE6D \uC5C6\uC74C" };
+          const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          if (setter) setter.call(el, ${jsStr(text)}); else el.value = ${jsStr(text)};
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          return { filled: true };`;
+}
+function domSubmitBody(selector) {
+  return `
+          const el = document.querySelector(${jsStr(selector)});
+          if (!el) return { submitted: false, reason: "selector \uB9E4\uCE6D \uC5C6\uC74C" };
+          const form = el instanceof HTMLFormElement ? el : el.closest("form");
+          if (!form) return { submitted: false, reason: "form \uC5C6\uC74C" };
+          form.requestSubmit ? form.requestSubmit() : form.submit();
+          return { submitted: true };`;
+}
+function domWaitForBody(selector, timeoutMs = 5e3) {
+  return `
+          const find = () => document.querySelector(${jsStr(selector)});
+          if (find()) return { found: true };
+          return await new Promise((resolve) => {
+            const obs = new MutationObserver(() => {
+              if (find()) { obs.disconnect(); clearTimeout(timer); resolve({ found: true }); }
+            });
+            const timer = setTimeout(() => { obs.disconnect(); resolve({ found: false }); }, ${timeoutMs});
+            obs.observe(document.documentElement, { childList: true, subtree: true });
+          });`;
+}
+
 // src/browser-view.tsx
 var import_react_dom = __toESM(require_react_dom(), 1);
 
@@ -12952,6 +13010,8 @@ function persist() {
   for (const cb of dtMapListeners) cb();
 }
 var idByLabel = loadPersisted();
+var pendingEvals = /* @__PURE__ */ new Map();
+var evalWired = false;
 var CREATED_KEY = "soksak-plugin-browser-chromium:created";
 function loadCreated() {
   try {
@@ -13345,7 +13405,7 @@ function makeChromium(app) {
     //   탭)로. id = 소스 브라우저(자기 소유만 소비 — 멀티창 중복 수신 방지; id 미상(null)은 단일
     //   소비자 가정으로 수용). "새 창" 모드는 엔진이 네이티브 팝업으로 직접 처리.
     on: (label, event, cb) => {
-      const engineEvent = event === "open-external" ? "popup-url" : event === "nav" || event === "title" || event === "loading" ? event : null;
+      const engineEvent = event === "open-external" ? "popup-url" : event === "nav" || event === "title" || event === "loading" || event === "favicon" ? event : null;
       if (!engineEvent) return noop;
       let un = null;
       let disposed = false;
@@ -13353,7 +13413,7 @@ function makeChromium(app) {
         const d = h.on(engineEvent, (p) => {
           const src = typeof p.id === "number" ? p.id : null;
           if (src == null || idByLabel.get(label) !== src) return;
-          if (engineEvent === "popup-url") cb({ url: p.url });
+          if (engineEvent === "popup-url" || engineEvent === "favicon") cb({ url: p.url });
           else if (engineEvent === "loading")
             cb({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
           else cb(engineEvent === "nav" ? { url: p.url } : { title: p.title });
@@ -13372,7 +13432,37 @@ function makeChromium(app) {
     // 나머지 v1 미지원 — 안전한 no-op. openWindow 는 "새 창" 모드를 엔진이 네이티브로 처리하므로 불요.
     openWindow: async () => {
     },
-    eval: async () => "",
+    // 페이지 JS 실행(엔진 eval verb, 스펙 §8) — body 는 async 함수 본문, JSON 직렬화 값을 return.
+    // 결과는 eval-result 이벤트로 회수한다. WebviewApi.eval 의 문자열 계약(native/WKWebView 유래)과
+    // 맞추기 위해 값을 JSON 문자열로 돌려준다 — 소비자(evalJson 류)가 JSON.parse 한다.
+    eval: async (label, body) => {
+      const id = idByLabel.get(label);
+      if (id == null) throw new Error(`no engine child for ${label}`);
+      const h = await engine(app);
+      if (!evalWired) {
+        evalWired = true;
+        h.on("eval-result", (p) => {
+          const cb = typeof p.evalId === "number" ? pendingEvals.get(p.evalId) : void 0;
+          if (cb) cb({ ok: !!p.ok, value: p.value });
+        });
+      }
+      const out = await h.send({ type: "eval", id, js: body });
+      const evalId = out.evalId;
+      if (typeof evalId !== "number") throw new Error(String(out.error ?? "eval \uC2E4\uD328"));
+      const r = await new Promise((resolve) => {
+        const t2 = setTimeout(() => {
+          pendingEvals.delete(evalId);
+          resolve({ ok: false, value: "eval \uC751\uB2F5 \uC2DC\uAC04 \uCD08\uACFC" });
+        }, 15e3);
+        pendingEvals.set(evalId, (res) => {
+          clearTimeout(t2);
+          pendingEvals.delete(evalId);
+          resolve(res);
+        });
+      });
+      if (!r.ok) throw new Error(String(r.value));
+      return JSON.stringify(r.value === void 0 ? null : r.value);
+    },
     injectScript: () => noop,
     list: async (prefix) => [...idByLabel.keys()].filter((l) => !prefix || l.startsWith(prefix))
   };
@@ -13492,6 +13582,95 @@ function registerCommands(ctx) {
   const reg = (name, spec) => {
     ctx.subscriptions.push(app.commands.register(name, spec));
   };
+  const evalJson = async (label, body) => {
+    const raw = await app.webview.eval(label, body);
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  };
+  const runDom = async (p, body) => {
+    const target = explicitTarget(p);
+    const e = resolveEntry(target);
+    if (!e || !app.webview) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+    try {
+      const v = await evalJson(e.label, body);
+      const viewId = resolveViewId(target);
+      if (v && typeof v === "object" && !Array.isArray(v)) return { ok: true, ...v, viewId };
+      return { ok: true, value: v, viewId };
+    } catch (err) {
+      return { ok: false, code: "INTERNAL", message: String(err instanceof Error ? err.message : err) };
+    }
+  };
+  reg("eval", {
+    description: "Run JavaScript in the page (async function body; return a JSON-serializable value).",
+    triggers: { ko: "\uC790\uBC14\uC2A4\uD06C\uB9BD\uD2B8 \uC2E4\uD589 \uD398\uC774\uC9C0 \uC2A4\uD06C\uB9BD\uD2B8 eval" },
+    params: { ...targetParam, js: { type: "string", description: "JS body \u2014 must return a JSON-serializable value", required: true } },
+    handler: (p) => runDom(p, String(p.js ?? ""))
+  });
+  reg("dom.text", {
+    description: "Get the visible text of the page or a specific selector element.",
+    triggers: { ko: "DOM \uD14D\uC2A4\uD2B8 \uC77D\uAE30 \uD398\uC774\uC9C0 \uD14D\uC2A4\uD2B8 \uC120\uD0DD\uC790 \uD14D\uC2A4\uD2B8" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector (omit = entire body)" },
+      maxLength: { type: "number", description: "Max character length" }
+    },
+    handler: (p) => runDom(p, domTextBody(p.selector ? String(p.selector) : void 0, typeof p.maxLength === "number" ? p.maxLength : 2e4))
+  });
+  reg("dom.html", {
+    description: "Get the HTML of the page or a specific selector element.",
+    triggers: { ko: "DOM HTML \uC77D\uAE30 \uD398\uC774\uC9C0 \uC18C\uC2A4" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector (omit = entire document)" },
+      maxLength: { type: "number", description: "Max character length" }
+    },
+    handler: (p) => runDom(p, domHtmlBody(p.selector ? String(p.selector) : void 0, typeof p.maxLength === "number" ? p.maxLength : 2e4))
+  });
+  reg("dom.query", {
+    description: "Summarize matching elements (tag / text / attributes) for a CSS selector \u2014 use to understand page structure.",
+    triggers: { ko: "DOM \uC694\uC18C \uC870\uD68C \uC120\uD0DD\uC790 \uB9E4\uCE6D \uAD6C\uC870 \uD30C\uC545" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector", required: true },
+      limit: { type: "number", description: "Max element count" }
+    },
+    handler: (p) => runDom(p, domQueryBody(String(p.selector), typeof p.limit === "number" ? p.limit : 20))
+  });
+  reg("dom.click", {
+    description: "Click the first element matching a CSS selector.",
+    triggers: { ko: "DOM \uD074\uB9AD \uBC84\uD2BC \uD074\uB9AD \uB9C1\uD06C \uD074\uB9AD \uD398\uC774\uC9C0 \uD074\uB9AD" },
+    params: { ...targetParam, selector: { type: "string", description: "CSS selector", required: true } },
+    handler: (p) => runDom(p, domClickBody(String(p.selector)))
+  });
+  reg("dom.fill", {
+    description: "Fill an input element with a value (fires input/change events \u2014 React form compatible).",
+    triggers: { ko: "DOM \uC785\uB825 \uCC44\uC6B0\uAE30 \uD3FC \uC785\uB825 \uD14D\uC2A4\uD2B8 \uC785\uB825 \uD544\uB4DC \uCC44\uC6B0\uAE30" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector", required: true },
+      text: { type: "string", description: "Value to enter", required: true }
+    },
+    handler: (p) => runDom(p, domFillBody(String(p.selector), String(p.text ?? "")))
+  });
+  reg("dom.submit", {
+    description: "Submit a form (selector can be the form element or any element inside it).",
+    triggers: { ko: "\uD3FC \uC81C\uCD9C submit \uC804\uC1A1 \uC591\uC2DD \uC81C\uCD9C" },
+    params: { ...targetParam, selector: { type: "string", description: "CSS selector", required: true } },
+    handler: (p) => runDom(p, domSubmitBody(String(p.selector)))
+  });
+  reg("dom.wait-for", {
+    description: "Wait until a selector appears on the page (dynamic pages \u2014 uses MutationObserver).",
+    triggers: { ko: "\uC694\uC18C \uB300\uAE30 \uB098\uD0C0\uB0A0 \uB54C\uAE4C\uC9C0 \uAE30\uB2E4\uB9AC\uAE30 \uB3D9\uC801 \uB85C\uB529 \uB300\uAE30" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector", required: true },
+      timeoutMs: { type: "number", description: "Max wait time (ms)" }
+    },
+    handler: (p) => runDom(p, domWaitForBody(String(p.selector), typeof p.timeoutMs === "number" ? p.timeoutMs : 5e3))
+  });
   reg("stats", {
     description: "Live engine-side browser child ids + label/devtools mappings (E2E/diagnostics \u2014 verifies close really destroyed the child).",
     message: (d) => `\uC5D4\uC9C4 child ${(d.ids ?? []).length}\uAC1C\uAC00 \uC0B4\uC544 \uC788\uC2B5\uB2C8\uB2E4.`,
@@ -14074,10 +14253,14 @@ function BrowserViewImpl({
     const d3 = webview.on(label, "loading", (p) => {
       setNav({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
     });
+    const d4 = webview.on(label, "favicon", (p) => {
+      if (typeof p.url === "string") ctx.setIcon?.(p.url);
+    });
     return () => {
       d1.dispose();
       d2.dispose();
       d3.dispose();
+      d4.dispose();
     };
   }, [label, webview, ctx]);
   const openExternal = (0, import_react.useCallback)(

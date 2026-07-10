@@ -3,6 +3,15 @@
 // 경유 — 코어 비결합. eval/dom/media 는 엔진 v1 미지원이라 제공하지 않는다(후속: CDP).
 import { fieldOf, type PluginApi, type PluginContext } from "./host";
 import {
+  domTextBody,
+  domHtmlBody,
+  domQueryBody,
+  domClickBody,
+  domFillBody,
+  domSubmitBody,
+  domWaitForBody,
+} from "soksak-kit-browser-common";
+import {
   makeChromium,
   devtoolsLabelFor,
   engineStats,
@@ -180,6 +189,101 @@ export function registerCommands(ctx: PluginContext): void {
   const reg = (name: string, spec: Parameters<NonNullable<typeof app.commands>["register"]>[1]) => {
     ctx.subscriptions.push(app.commands!.register(name, spec));
   };
+
+  // ── eval/dom.* — 엔진 eval verb 소비(어댑터 eval 이 JSON 문자열 반환). 스니펫은 kit 단일 소스.
+  const evalJson = async (label: string, body: string): Promise<unknown> => {
+    const raw = await app.webview!.eval(label, body);
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  };
+  const runDom = async (p: Record<string, unknown>, body: string): Promise<Record<string, unknown>> => {
+    const target = explicitTarget(p);
+    const e = resolveEntry(target);
+    if (!e || !app.webview) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+    try {
+      const v = await evalJson(e.label, body);
+      const viewId = resolveViewId(target);
+      if (v && typeof v === "object" && !Array.isArray(v)) return { ok: true, ...(v as object), viewId };
+      return { ok: true, value: v, viewId };
+    } catch (err) {
+      return { ok: false, code: "INTERNAL", message: String(err instanceof Error ? err.message : err) };
+    }
+  };
+
+  reg("eval", {
+    description: "Run JavaScript in the page (async function body; return a JSON-serializable value).",
+    triggers: { ko: "자바스크립트 실행 페이지 스크립트 eval" },
+    params: { ...targetParam, js: { type: "string", description: "JS body — must return a JSON-serializable value", required: true } },
+    handler: (p) => runDom(p, String(p.js ?? "")),
+  });
+  reg("dom.text", {
+    description: "Get the visible text of the page or a specific selector element.",
+    triggers: { ko: "DOM 텍스트 읽기 페이지 텍스트 선택자 텍스트" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector (omit = entire body)" },
+      maxLength: { type: "number", description: "Max character length" },
+    },
+    handler: (p) =>
+      runDom(p, domTextBody(p.selector ? String(p.selector) : undefined, typeof p.maxLength === "number" ? p.maxLength : 20000)),
+  });
+  reg("dom.html", {
+    description: "Get the HTML of the page or a specific selector element.",
+    triggers: { ko: "DOM HTML 읽기 페이지 소스" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector (omit = entire document)" },
+      maxLength: { type: "number", description: "Max character length" },
+    },
+    handler: (p) =>
+      runDom(p, domHtmlBody(p.selector ? String(p.selector) : undefined, typeof p.maxLength === "number" ? p.maxLength : 20000)),
+  });
+  reg("dom.query", {
+    description:
+      "Summarize matching elements (tag / text / attributes) for a CSS selector — use to understand page structure.",
+    triggers: { ko: "DOM 요소 조회 선택자 매칭 구조 파악" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector", required: true },
+      limit: { type: "number", description: "Max element count" },
+    },
+    handler: (p) => runDom(p, domQueryBody(String(p.selector), typeof p.limit === "number" ? p.limit : 20)),
+  });
+  reg("dom.click", {
+    description: "Click the first element matching a CSS selector.",
+    triggers: { ko: "DOM 클릭 버튼 클릭 링크 클릭 페이지 클릭" },
+    params: { ...targetParam, selector: { type: "string", description: "CSS selector", required: true } },
+    handler: (p) => runDom(p, domClickBody(String(p.selector))),
+  });
+  reg("dom.fill", {
+    description: "Fill an input element with a value (fires input/change events — React form compatible).",
+    triggers: { ko: "DOM 입력 채우기 폼 입력 텍스트 입력 필드 채우기" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector", required: true },
+      text: { type: "string", description: "Value to enter", required: true },
+    },
+    handler: (p) => runDom(p, domFillBody(String(p.selector), String(p.text ?? ""))),
+  });
+  reg("dom.submit", {
+    description: "Submit a form (selector can be the form element or any element inside it).",
+    triggers: { ko: "폼 제출 submit 전송 양식 제출" },
+    params: { ...targetParam, selector: { type: "string", description: "CSS selector", required: true } },
+    handler: (p) => runDom(p, domSubmitBody(String(p.selector))),
+  });
+  reg("dom.wait-for", {
+    description: "Wait until a selector appears on the page (dynamic pages — uses MutationObserver).",
+    triggers: { ko: "요소 대기 나타날 때까지 기다리기 동적 로딩 대기" },
+    params: {
+      ...targetParam,
+      selector: { type: "string", description: "CSS selector", required: true },
+      timeoutMs: { type: "number", description: "Max wait time (ms)" },
+    },
+    handler: (p) => runDom(p, domWaitForBody(String(p.selector), typeof p.timeoutMs === "number" ? p.timeoutMs : 5000)),
+  });
 
   reg("stats", {
     description: "Live engine-side browser child ids + label/devtools mappings (E2E/diagnostics — verifies close really destroyed the child).",
