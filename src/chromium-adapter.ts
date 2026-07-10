@@ -396,6 +396,7 @@ export function makeChromium(app: PluginApi): WebviewApi {
       void send(app, { type: "popup-mode", asWindow });
       const out = await send(app, {
         type: "create",
+        owner: "soksak-plugin-browser-chromium",
         x: Math.round(o.x),
         y: Math.round(o.y),
         w: Math.max(1, Math.round(o.w)),
