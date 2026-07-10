@@ -442,6 +442,13 @@ export function makeChromium(app: PluginApi): WebviewApi {
       await send(app, { type: "load", id, url });
     },
 
+    // 로딩 정지 — 엔진 stop verb(soksak-sidecar-browser-spec). 툴바의 reload↔stop 토글이 쓴다.
+    stop: async (label) => {
+      const id = idByLabel.get(label);
+      if (id == null || closeSent.has(id)) return;
+      await send(app, { type: "stop", id });
+    },
+
     history: async (label, delta) => {
       const id = idByLabel.get(label);
       if (id == null || closeSent.has(id)) return;
@@ -533,7 +540,7 @@ export function makeChromium(app: PluginApi): WebviewApi {
     //   소비자 가정으로 수용). "새 창" 모드는 엔진이 네이티브 팝업으로 직접 처리.
     on: (label, event, cb) => {
       const engineEvent =
-        event === "open-external" ? "popup-url" : event === "nav" || event === "title" ? event : null;
+        event === "open-external" ? "popup-url" : event === "nav" || event === "title" || event === "loading" ? event : null;
       if (!engineEvent) return noop;
       let un: Disposable | null = null;
       let disposed = false;
@@ -546,6 +553,8 @@ export function makeChromium(app: PluginApi): WebviewApi {
             // 중복 생성한다(실측: 뷰 7개 → 새 탭 7개). 소스 뷰 하나만 연다.
             if (src == null || idByLabel.get(label) !== src) return;
             if (engineEvent === "popup-url") cb({ url: p.url });
+            else if (engineEvent === "loading")
+              cb({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
             else cb(engineEvent === "nav" ? { url: p.url } : { title: p.title });
           });
           if (disposed) d.dispose();

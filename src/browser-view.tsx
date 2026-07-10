@@ -7,6 +7,8 @@
 //   - 아이콘: lucide-style inline SVG(코어 Icon 컴포넌트 비의존)
 
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { renderNavState, initialNavState } from "soksak-browser-kit";
+import type { NavState } from "soksak-browser-kit";
 import type { PluginApi, PluginViewContext } from "./host";
 import { boundsCommitDecision, followShouldContinue } from "./bounds-follow";
 import { t } from "./i18n";
@@ -274,6 +276,8 @@ function BrowserViewImpl({
   const localUrlRef = useRef(initialUrl);
   const [input, setInput] = useState(initialUrl);
   const [bmOpen, setBmOpen] = useState(false);
+  // 툴바 내비 상태 — 판정은 kit renderNavState 가 단일 진실(세 브라우저 공유). 엔진 loading 이벤트가 채운다.
+  const [nav, setNav] = useState<NavState>(initialNavState);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const inputFocusRef = useRef(false);
 
@@ -531,9 +535,13 @@ function BrowserViewImpl({
       const title = p.title as string;
       if (title) ctx.setTitle(title);
     });
+    const d3 = webview.on(label, "loading", (p) => {
+      setNav({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
+    });
     return () => {
       d1.dispose();
       d2.dispose();
+      d3.dispose();
     };
   }, [label, webview, ctx]);
 
@@ -617,13 +625,14 @@ function BrowserViewImpl({
 
   return (
     <div className="browser-view">
-      <div className="bv-bar">
+      <div className="bv-bar" style={{ position: "relative" }}>
         <button
           type="button"
           className="bv-btn"
           title={t("back", lang)}
           data-node="back"
-          onClick={() => void webview.history(label, -1)}
+          style={{ opacity: renderNavState(nav).backEnabled ? 1 : 0.35 }}
+          onClick={() => { if (renderNavState(nav).backEnabled) void webview.history(label, -1); }}
         >
           <IconBack />
         </button>
@@ -632,18 +641,32 @@ function BrowserViewImpl({
           className="bv-btn"
           title={t("forward", lang)}
           data-node="forward"
-          onClick={() => void webview.history(label, 1)}
+          style={{ opacity: renderNavState(nav).forwardEnabled ? 1 : 0.35 }}
+          onClick={() => { if (renderNavState(nav).forwardEnabled) void webview.history(label, 1); }}
         >
           <IconForward />
         </button>
         <button
           type="button"
           className="bv-btn"
-          title={t("reload", lang)}
+          // 로딩 중엔 정지(✕)로 토글 — 판정은 kit renderNavState(오프스크린 브라우저와 동일).
+          title={renderNavState(nav).reloadAction === "stop" ? t("stop", lang) : t("reload", lang)}
           data-node="reload"
-          onClick={() => void webview.navigate(label, localUrl)}
+          onClick={() => {
+            if (renderNavState(nav).reloadAction === "stop") void webview.stop?.(label);
+            else void webview.navigate(label, localUrl);
+          }}
         >
-          <IconReload />
+          {renderNavState(nav).reloadAction === "stop" ? <span aria-hidden>✕</span> : <IconReload />}
+        </button>
+        <button
+          type="button"
+          className="bv-btn"
+          title={t("home", lang)}
+          data-node="home"
+          onClick={() => navigate(String(app.settings.get("homeUrl") ?? "about:blank"))}
+        >
+          <span aria-hidden>⌂</span>
         </button>
         <input
           className="bv-url"
@@ -664,6 +687,15 @@ function BrowserViewImpl({
               navigate(input);
               e.currentTarget.blur();
             }
+          }}
+        />
+        <div
+          data-node="progress"
+          style={{
+            position: "absolute", left: 0, bottom: 0, height: 2,
+            background: "var(--color-accent, #3b82f6)", transition: "width .25s ease-out",
+            opacity: renderNavState(nav).progressVisible ? 1 : 0,
+            width: `${renderNavState(nav).progressWidth}%`,
           }}
         />
         <button

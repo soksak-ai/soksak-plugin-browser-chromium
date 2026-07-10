@@ -12756,6 +12756,19 @@ var import_client = __toESM(require_client(), 1);
 // src/browser-view.tsx
 var import_react = __toESM(require_react(), 1);
 
+// ../../../ai/cli/soksak-browser-kit/src/nav-state.ts
+var initialNavState = { loading: false, canBack: false, canForward: false };
+function renderNavState(s) {
+  return {
+    reloadGlyph: s.loading ? "\u2715" : "\u27F3",
+    reloadAction: s.loading ? "stop" : "reload",
+    progressVisible: s.loading,
+    progressWidth: s.loading ? 70 : 100,
+    backEnabled: s.canBack,
+    forwardEnabled: s.canForward
+  };
+}
+
 // src/bounds-follow.ts
 function followShouldContinue(i) {
   return i.live || i.gesture || i.stableFrames < i.stopAfter;
@@ -12769,6 +12782,8 @@ function boundsCommitDecision(i) {
 // src/i18n.ts
 var EN = {
   back: "Back",
+  stop: "Stop",
+  home: "Home",
   forward: "Forward",
   reload: "Reload",
   urlPlaceholder: "Enter URL or search",
@@ -12785,6 +12800,8 @@ var EN = {
 };
 var KO = {
   back: "\uC774\uC804",
+  stop: "\uC815\uC9C0",
+  home: "\uD648",
   forward: "\uC774\uD6C4",
   reload: "\uC0C8\uB85C\uACE0\uCE68",
   urlPlaceholder: "URL \uB610\uB294 \uAC80\uC0C9\uC5B4 \uC785\uB825",
@@ -13163,6 +13180,12 @@ function makeChromium(app) {
       if (id == null || closeSent.has(id)) return;
       await send(app, { type: "load", id, url });
     },
+    // 로딩 정지 — 엔진 stop verb(soksak-sidecar-browser-spec). 툴바의 reload↔stop 토글이 쓴다.
+    stop: async (label) => {
+      const id = idByLabel.get(label);
+      if (id == null || closeSent.has(id)) return;
+      await send(app, { type: "stop", id });
+    },
     history: async (label, delta) => {
       const id = idByLabel.get(label);
       if (id == null || closeSent.has(id)) return;
@@ -13231,7 +13254,7 @@ function makeChromium(app) {
     //   탭)로. id = 소스 브라우저(자기 소유만 소비 — 멀티창 중복 수신 방지; id 미상(null)은 단일
     //   소비자 가정으로 수용). "새 창" 모드는 엔진이 네이티브 팝업으로 직접 처리.
     on: (label, event, cb) => {
-      const engineEvent = event === "open-external" ? "popup-url" : event === "nav" || event === "title" ? event : null;
+      const engineEvent = event === "open-external" ? "popup-url" : event === "nav" || event === "title" || event === "loading" ? event : null;
       if (!engineEvent) return noop;
       let un = null;
       let disposed = false;
@@ -13240,6 +13263,8 @@ function makeChromium(app) {
           const src = typeof p.id === "number" ? p.id : null;
           if (src == null || idByLabel.get(label) !== src) return;
           if (engineEvent === "popup-url") cb({ url: p.url });
+          else if (engineEvent === "loading")
+            cb({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
           else cb(engineEvent === "nav" ? { url: p.url } : { title: p.title });
         });
         if (disposed) d.dispose();
@@ -13357,7 +13382,7 @@ var targetParam = {
     required: false
   }
 };
-function normalizeUrl(raw) {
+function normalizeUrl2(raw) {
   const s = raw.trim();
   if (!s) return "about:blank";
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || s.startsWith("about:") || s.startsWith("data:")) return s;
@@ -13409,7 +13434,7 @@ function registerCommands(ctx) {
       const e = resolveEntry(target);
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       const viewId = resolveViewId(target);
-      const url = normalizeUrl(String(p.url ?? ""));
+      const url = normalizeUrl2(String(p.url ?? ""));
       app.events.progress?.("navigate", url);
       await chromium.navigate(e.label, url);
       return { ok: true, viewId };
@@ -13460,6 +13485,33 @@ function registerCommands(ctx) {
       if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
       await chromium.navigate(e.label, e.getUrl());
       return { ok: true, viewId: resolveViewId(target) };
+    }
+  });
+  reg("stop", {
+    description: "Stop loading the active (or specified) browser view.",
+    triggers: { ko: "\uC815\uC9C0 \uC2A4\uD1B1 stop" },
+    message: () => "\uB85C\uB529\uC744 \uC815\uC9C0\uD588\uC2B5\uB2C8\uB2E4.",
+    params: targetParam,
+    handler: async (p) => {
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      await chromium.stop?.(e.label);
+      return { ok: true, viewId: resolveViewId(target) };
+    }
+  });
+  reg("home", {
+    description: "Navigate the active (or specified) browser view to the configured home URL.",
+    triggers: { ko: "\uD648 home" },
+    message: () => "\uD648\uC73C\uB85C \uC774\uB3D9\uD588\uC2B5\uB2C8\uB2E4.",
+    params: targetParam,
+    handler: async (p) => {
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      const url = normalizeUrl2(String(app.settings.get("homeUrl") ?? "about:blank"));
+      await chromium.navigate(e.label, url);
+      return { ok: true, viewId: resolveViewId(target), url };
     }
   });
   const screencastParam = {
@@ -13529,8 +13581,8 @@ function registerCommands(ctx) {
     params: { url: { type: "string", description: "URL to open (optional)", required: false } },
     handler: async (p) => {
       const url = typeof p.url === "string" ? p.url : void 0;
-      if (url) setPendingUrl(normalizeUrl(url));
-      app.events.progress?.("open", url ? normalizeUrl(url) : "");
+      if (url) setPendingUrl(normalizeUrl2(url));
+      app.events.progress?.("open", url ? normalizeUrl2(url) : "");
       const out = await app.commands.execute("view.open", { program: "browser-chromium" }).catch(() => null);
       if (!out || !out.ok) {
         if (url) takePendingUrl();
@@ -13563,7 +13615,7 @@ var LIVE_THROTTLE_MS = 32;
 var dtDividerDragActive = false;
 var STABLE_STOP_FRAMES = 4;
 var resizeGestureActive = false;
-function normalizeUrl2(input) {
+function normalizeUrl3(input) {
   const s = input.trim();
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) return s;
   if (!s.includes(" ") && s.includes(".")) return `https://${s}`;
@@ -13702,6 +13754,7 @@ function BrowserViewImpl({
   const localUrlRef = (0, import_react.useRef)(initialUrl);
   const [input, setInput] = (0, import_react.useState)(initialUrl);
   const [bmOpen, setBmOpen] = (0, import_react.useState)(false);
+  const [nav, setNav] = (0, import_react.useState)(initialNavState);
   const [bookmarks, setBookmarks] = (0, import_react.useState)([]);
   const inputFocusRef = (0, import_react.useRef)(false);
   (0, import_react.useEffect)(() => {
@@ -13894,9 +13947,13 @@ function BrowserViewImpl({
       const title = p.title;
       if (title) ctx.setTitle(title);
     });
+    const d3 = webview.on(label, "loading", (p) => {
+      setNav({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
+    });
     return () => {
       d1.dispose();
       d2.dispose();
+      d3.dispose();
     };
   }, [label, webview, ctx]);
   const openExternal = (0, import_react.useCallback)(
@@ -13927,7 +13984,7 @@ function BrowserViewImpl({
     return () => d.dispose();
   }, [label, webview, openExternal]);
   const navigate = (0, import_react.useCallback)((raw) => {
-    const u = normalizeUrl2(raw);
+    const u = normalizeUrl3(raw);
     setLocalUrl(u);
     if (label && webview) {
       void webview.navigate(label, u).catch(() => {
@@ -13956,7 +14013,7 @@ function BrowserViewImpl({
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "browser-view", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "bv-area", ref: areaRef }) });
   }
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "browser-view", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "bv-bar", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "bv-bar", style: { position: "relative" }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "button",
         {
@@ -13964,7 +14021,10 @@ function BrowserViewImpl({
           className: "bv-btn",
           title: t("back", lang),
           "data-node": "back",
-          onClick: () => void webview.history(label, -1),
+          style: { opacity: renderNavState(nav).backEnabled ? 1 : 0.35 },
+          onClick: () => {
+            if (renderNavState(nav).backEnabled) void webview.history(label, -1);
+          },
           children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconBack, {})
         }
       ),
@@ -13975,7 +14035,10 @@ function BrowserViewImpl({
           className: "bv-btn",
           title: t("forward", lang),
           "data-node": "forward",
-          onClick: () => void webview.history(label, 1),
+          style: { opacity: renderNavState(nav).forwardEnabled ? 1 : 0.35 },
+          onClick: () => {
+            if (renderNavState(nav).forwardEnabled) void webview.history(label, 1);
+          },
           children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconForward, {})
         }
       ),
@@ -13984,10 +14047,24 @@ function BrowserViewImpl({
         {
           type: "button",
           className: "bv-btn",
-          title: t("reload", lang),
+          title: renderNavState(nav).reloadAction === "stop" ? t("stop", lang) : t("reload", lang),
           "data-node": "reload",
-          onClick: () => void webview.navigate(label, localUrl),
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconReload, {})
+          onClick: () => {
+            if (renderNavState(nav).reloadAction === "stop") void webview.stop?.(label);
+            else void webview.navigate(label, localUrl);
+          },
+          children: renderNavState(nav).reloadAction === "stop" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-hidden": true, children: "\u2715" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconReload, {})
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          type: "button",
+          className: "bv-btn",
+          title: t("home", lang),
+          "data-node": "home",
+          onClick: () => navigate(String(app.settings.get("homeUrl") ?? "about:blank")),
+          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-hidden": true, children: "\u2302" })
         }
       ),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -14013,6 +14090,22 @@ function BrowserViewImpl({
               navigate(input);
               e.currentTarget.blur();
             }
+          }
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          "data-node": "progress",
+          style: {
+            position: "absolute",
+            left: 0,
+            bottom: 0,
+            height: 2,
+            background: "var(--color-accent, #3b82f6)",
+            transition: "width .25s ease-out",
+            opacity: renderNavState(nav).progressVisible ? 1 : 0,
+            width: `${renderNavState(nav).progressWidth}%`
           }
         }
       ),

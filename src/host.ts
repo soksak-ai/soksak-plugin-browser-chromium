@@ -100,6 +100,8 @@ export interface WebviewApi {
   openWindow: (url: string) => Promise<void>;
   /** 세션 히스토리 이동(delta=-1 뒤/+1 앞). */
   history: (label: string, delta: number) => Promise<void>;
+  /** 로딩 정지(엔진 stop verb) — 툴바 reload↔stop 토글용. 미구현 백엔드는 생략 가능. */
+  stop?: (label: string) => Promise<void>;
   /** 페이지에서 JS 실행 후 결과 문자열 반환(AI/E2E DOM 제어). macOS 한정. */
   eval: (label: string, js: string) => Promise<string>;
   /** init script 주입(document-start/end, 매 내비게이션 재주입). macOS 한정(비-macOS no-op).
@@ -109,10 +111,11 @@ export interface WebviewApi {
     code: string,
     phase?: "document-start" | "document-end",
   ) => Disposable;
-  /** webview 이벤트 구독: "nav"({url})·"title"({title})·"status"·"open-external"({url}). 반환=해지. */
+  /** webview 이벤트 구독: "nav"({url})·"title"({title})·"status"·"open-external"({url})·
+   *  "loading"({loading,canBack,canForward} — 스피너/정지 토글·뒤로/앞으로 활성). 반환=해지. */
   on: (
     label: string,
-    event: "nav" | "title" | "status" | "open-external",
+    event: "nav" | "title" | "status" | "open-external" | "loading",
     cb: (payload: Record<string, unknown>) => void,
   ) => Disposable;
   /** 현재 살아있는 webview label 목록(prefix 필터). GC/정리용. */

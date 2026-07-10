@@ -227,6 +227,20 @@
           "ko": "개발자 도구 탭 내부 분할 토글",
           "en": "Toggle devtools inside the tab"
         }
+      },
+      {
+        "name": "stop",
+        "title": {
+          "ko": "정지",
+          "en": "Stop"
+        }
+      },
+      {
+        "name": "home",
+        "title": {
+          "ko": "홈",
+          "en": "Home"
+        }
       }
     ],
     "nodes": [
@@ -270,6 +284,20 @@
         "description": {
           "ko": "디바이더 드래그 중 시각 연속 스탠드인(freeze-frame) 오버레이",
           "en": "Visual-continuity stand-in (freeze-frame) overlay during divider drag"
+        }
+      },
+      {
+        "id": "home",
+        "description": {
+          "ko": "홈",
+          "en": "Home"
+        }
+      },
+      {
+        "id": "progress",
+        "description": {
+          "ko": "로딩 진행 바",
+          "en": "Loading progress bar"
         }
       }
     ]

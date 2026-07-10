@@ -3,6 +3,8 @@ type Dict = Record<string, string>;
 
 const EN: Dict = {
   back: "Back",
+  stop: "Stop",
+  home: "Home",
   forward: "Forward",
   reload: "Reload",
   urlPlaceholder: "Enter URL or search",
@@ -20,6 +22,8 @@ const EN: Dict = {
 
 const KO: Dict = {
   back: "이전",
+  stop: "정지",
+  home: "홈",
   forward: "이후",
   reload: "새로고침",
   urlPlaceholder: "URL 또는 검색어 입력",

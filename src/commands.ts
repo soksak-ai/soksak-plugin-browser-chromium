@@ -278,6 +278,35 @@ export function registerCommands(ctx: PluginContext): void {
     },
   });
 
+  reg("stop", {
+    description: "Stop loading the active (or specified) browser view.",
+    triggers: { ko: "정지 스톱 stop" },
+    message: () => "로딩을 정지했습니다.",
+    params: targetParam,
+    handler: async (p) => {
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      await chromium.stop?.(e.label);
+      return { ok: true, viewId: resolveViewId(target) };
+    },
+  });
+
+  reg("home", {
+    description: "Navigate the active (or specified) browser view to the configured home URL.",
+    triggers: { ko: "홈 home" },
+    message: () => "홈으로 이동했습니다.",
+    params: targetParam,
+    handler: async (p) => {
+      const target = explicitTarget(p);
+      const e = resolveEntry(target);
+      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      const url = normalizeUrl(String(app.settings.get("homeUrl") ?? "about:blank"));
+      await chromium.navigate(e.label, url);
+      return { ok: true, viewId: resolveViewId(target), url };
+    },
+  });
+
   const screencastParam = {
     screencast: {
       type: "boolean" as const,
