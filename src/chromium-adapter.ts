@@ -263,7 +263,7 @@ function sendClose(app: PluginApi, id: number): void {
 // child 를 파괴한다(페이지 소실·devtools 동반닫힘 오발/불발 — 실측 flake). 비활성 프로젝트 축은 스캔
 // 밖(프로젝트 전환은 언마운트-파킹 경로라 close 판정에 안 옴).
 async function viewExistsAnywhere(app: PluginApi, viewId: string): Promise<boolean | null> {
-  const cl = await app.commands?.execute("sheet.list", {}).catch(() => null);
+  const cl = await app.commands?.execute("space.list", {}).catch(() => null);
   // 조회 자체가 실패(플러그인 dispose 중·부팅 경합)면 "없음"이 아니라 판단 불가(null) — 호출자는
   // 파괴하지 않는다(오판 파괴 = 살아있는 페이지 소실). 실제 "없음"은 조회 성공+미발견일 때만.
   if (cl == null) return null;

@@ -13183,7 +13183,7 @@ function sendClose(app, id) {
   void send(app, { type: "close", id });
 }
 async function viewExistsAnywhere(app, viewId) {
-  const cl = await app.commands?.execute("sheet.list", {}).catch(() => null);
+  const cl = await app.commands?.execute("space.list", {}).catch(() => null);
   if (cl == null) return null;
   const sheets = (fieldOf(cl, "sheets") ?? []).map((c) => c.id);
   for (const sheet of sheets.length ? sheets : [void 0]) {
