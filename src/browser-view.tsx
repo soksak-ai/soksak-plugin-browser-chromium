@@ -499,8 +499,24 @@ function BrowserViewImpl({
       { threshold: [0, 0.01] },
     );
     io.observe(el);
-    return () => io.disconnect();
-  }, [webview, label, syncBounds]);
+    // 1차 신호는 코어 view.parked(유효 가시성 단일 소유) — IO 는 안전망으로 유지. 멱등 토글.
+    const offPark = app.events.on("view.parked", (p) => {
+      const q = p as { viewId?: string; parked?: boolean };
+      if (q.viewId !== ctx.viewId) return;
+      const visible = !q.parked;
+      if (visible === lastVisibleRef.current) return;
+      lastVisibleRef.current = visible;
+      void webview.visible(label, visible);
+      if (visible) {
+        lastRectRef.current = "";
+        syncBounds(true);
+      }
+    });
+    return () => {
+      io.disconnect();
+      offPark.dispose();
+    };
+  }, [webview, label, syncBounds, app, ctx.viewId]);
 
   // webview nav 이벤트 → localUrl 동기화 + ctx.setTitle
   useEffect(() => {
