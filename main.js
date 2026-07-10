@@ -12756,7 +12756,7 @@ var import_client = __toESM(require_client(), 1);
 // src/browser-view.tsx
 var import_react = __toESM(require_react(), 1);
 
-// ../../kits/soksak-kit-browser-chassis/src/nav-state.ts
+// ../../kits/soksak-kit-browser-common/src/nav-state.ts
 var initialNavState = { loading: false, canBack: false, canForward: false };
 function renderNavState(s) {
   return {
@@ -12769,7 +12769,7 @@ function renderNavState(s) {
   };
 }
 
-// ../../kits/soksak-kit-browser-chassis/src/toolbar.ts
+// ../../kits/soksak-kit-browser-common/src/toolbar.ts
 function btn(node, label, title) {
   const b = document.createElement("button");
   b.type = "button";
