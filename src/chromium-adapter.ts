@@ -34,6 +34,13 @@ function persist(): void {
   for (const cb of dtMapListeners) cb();
 }
 
+// [수명주기 방벽 — kit lifecycle(claims)과의 관계] offscreen 은 kit 의 claim(공유 소유 장부,
+// 발화 시점 재확인)으로 인스턴스 경계 close 경합을 막는다. 이 어댑터는 다른 방벽을 이미 보유한다:
+// deactivate 시 cancelInstanceTimers 가 전 타이머를 소거(+instanceDead 로 이후 디바운스 차단)하고,
+// 미인수 child 는 인수 유예 후 reconcile 이 회수한다. devLoad 는 deactivate 를 await 하므로 옛
+// 타이머는 새 인스턴스보다 먼저 죽는다. 두 방벽은 등가 — 여기의 close 경로는 뷰 존재 판정
+// (viewExistsAnywhere: 이동/파킹=보존, 닫힘=파괴)이 결합된 검증 행동이라 kit 흡수는 회귀 리스크가
+// 이득을 초과한다고 판정(2026-07-10). 새 수명주기 코드는 kit 을 쓰라 — 여기만 예외로 남긴다.
 const idByLabel = loadPersisted();
 // eval 왕복 대기(evalId → resolve) — eval-result 이벤트(스펙 §8)로 완결된다.
 const pendingEvals = new Map<number, (r: { ok: boolean; value: unknown }) => void>();
@@ -173,11 +180,25 @@ export async function runReconcile(app: PluginApi): Promise<Record<string, unkno
   const live = await engineStats(app);
   if (live == null) return { ok: false, reason: "engine stats unavailable" };
   const mapped = [...idByLabel.values()];
-  const { close, forget } = reconcileOrphans({ live, mapped, ledger: [...allCreated] });
+  // 회수 근거는 엔진의 소유 기록(stats.surfaces.owner) 우선 — 장부는 유실될 수 있다(스펙 §8
+  // Ownership; offscreen 과 동일 규칙). owner 미지원(구 dylib)이면 장부 대조 폴백.
+  const mine = await engineOwnedIds(app);
+  const { close, forget } =
+    mine != null
+      ? { close: mine.filter((id) => !mapped.includes(id)), forget: [...allCreated].filter((id) => !live.includes(id)) }
+      : reconcileOrphans({ live, mapped, ledger: [...allCreated] });
   for (const id of close) sendClose(app, id);
   for (const id of forget) allCreated.delete(id);
   if (forget.length) persistCreated();
-  return { ok: true, live, mapped, ledger: ledgerSnapshot(), closed: close, forgot: forget };
+  return { ok: true, live, mapped, ownerBased: mine != null, ledger: ledgerSnapshot(), closed: close, forgot: forget };
+}
+
+// 엔진이 이 플러그인 소유로 기록한 생존 id — owner 미지원 엔진이면 null(폴백 신호).
+async function engineOwnedIds(app: PluginApi): Promise<number[] | null> {
+  const st = await send(app, { type: "stats" }).catch(() => null);
+  const surfaces = (st as { surfaces?: Array<{ id: number; owner: string }> } | null)?.surfaces;
+  if (!Array.isArray(surfaces)) return null;
+  return surfaces.filter((x) => x.owner === "soksak-plugin-browser-chromium").map((x) => x.id);
 }
 
 // 이전 JS 인스턴스에서 넘어온 미인수 label — open() 이 재사용하면 제거, grace 후 잔여는 회수.
@@ -208,13 +229,13 @@ export function scheduleOrphanSweep(app: PluginApi): void {
     persistDevtools();
     // 2) 엔진 대조 — 장부에 있는데 매핑이 참조하지 않는 생존 child = 유령 잔존(어떤 경로로 새었든) 회수.
     //    죽은 장부 항목은 잊는다. 다른 창 child(장부 밖)는 건드리지 않는다(orphan-reconcile.ts).
-    void engineStats(app).then((live) => {
+    void Promise.all([engineStats(app), engineOwnedIds(app)]).then(([live, mine]) => {
       if (live == null) return; // 엔진 조회 실패 — 장부 보존, 다음 인스턴스가 재시도(자가치유 유지)
-      const { close, forget } = reconcileOrphans({
-        live,
-        mapped: [...idByLabel.values()],
-        ledger: [...allCreated],
-      });
+      const mapped = [...idByLabel.values()];
+      const { close, forget } =
+        mine != null
+          ? { close: mine.filter((id) => !mapped.includes(id)), forget: [...allCreated].filter((id) => !live.includes(id)) }
+          : reconcileOrphans({ live, mapped, ledger: [...allCreated] });
       for (const id of close) {
         console.warn(`[browser-chromium] 미회수 잔존 child 회수: id=${id}`);
         sendClose(app, id);
@@ -267,10 +288,10 @@ async function viewExistsAnywhere(app: PluginApi, viewId: string): Promise<boole
   // 조회 자체가 실패(플러그인 dispose 중·부팅 경합)면 "없음"이 아니라 판단 불가(null) — 호출자는
   // 파괴하지 않는다(오판 파괴 = 살아있는 페이지 소실). 실제 "없음"은 조회 성공+미발견일 때만.
   if (cl == null) return null;
-  const sheets = (fieldOf<{ id: string }[]>(cl, "sheets") ?? []).map((c) => c.id);
-  for (const sheet of sheets.length ? sheets : [undefined]) {
+  const spaces = (fieldOf<{ id: string }[]>(cl, "spaces") ?? []).map((c) => c.id);
+  for (const space of spaces.length ? spaces : [undefined]) {
     const pl = await app.commands
-      ?.execute("panel.list", sheet ? { sheet } : {})
+      ?.execute("panel.list", space ? { space } : {})
       .catch(() => null);
     const panels = (fieldOf<{ id: string }[]>(pl, "panels") ?? []).map((g) => g.id);
     for (const panel of panels) {

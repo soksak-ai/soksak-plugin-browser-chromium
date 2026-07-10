@@ -13112,11 +13112,18 @@ async function runReconcile(app) {
   const live = await engineStats(app);
   if (live == null) return { ok: false, reason: "engine stats unavailable" };
   const mapped = [...idByLabel.values()];
-  const { close, forget } = reconcileOrphans({ live, mapped, ledger: [...allCreated] });
+  const mine = await engineOwnedIds(app);
+  const { close, forget } = mine != null ? { close: mine.filter((id) => !mapped.includes(id)), forget: [...allCreated].filter((id) => !live.includes(id)) } : reconcileOrphans({ live, mapped, ledger: [...allCreated] });
   for (const id of close) sendClose(app, id);
   for (const id of forget) allCreated.delete(id);
   if (forget.length) persistCreated();
-  return { ok: true, live, mapped, ledger: ledgerSnapshot(), closed: close, forgot: forget };
+  return { ok: true, live, mapped, ownerBased: mine != null, ledger: ledgerSnapshot(), closed: close, forgot: forget };
+}
+async function engineOwnedIds(app) {
+  const st = await send(app, { type: "stats" }).catch(() => null);
+  const surfaces = st?.surfaces;
+  if (!Array.isArray(surfaces)) return null;
+  return surfaces.filter((x) => x.owner === "soksak-plugin-browser-chromium").map((x) => x.id);
 }
 var unclaimed = new Set(idByLabel.keys());
 var sweepScheduled = true;
@@ -13138,13 +13145,10 @@ function scheduleOrphanSweep(app) {
     unclaimed.clear();
     persist();
     persistDevtools();
-    void engineStats(app).then((live) => {
+    void Promise.all([engineStats(app), engineOwnedIds(app)]).then(([live, mine]) => {
       if (live == null) return;
-      const { close, forget } = reconcileOrphans({
-        live,
-        mapped: [...idByLabel.values()],
-        ledger: [...allCreated]
-      });
+      const mapped = [...idByLabel.values()];
+      const { close, forget } = mine != null ? { close: mine.filter((id) => !mapped.includes(id)), forget: [...allCreated].filter((id) => !live.includes(id)) } : reconcileOrphans({ live, mapped, ledger: [...allCreated] });
       for (const id of close) {
         console.warn(`[browser-chromium] \uBBF8\uD68C\uC218 \uC794\uC874 child \uD68C\uC218: id=${id}`);
         sendClose(app, id);
@@ -13185,9 +13189,9 @@ function sendClose(app, id) {
 async function viewExistsAnywhere(app, viewId) {
   const cl = await app.commands?.execute("space.list", {}).catch(() => null);
   if (cl == null) return null;
-  const sheets = (fieldOf(cl, "sheets") ?? []).map((c) => c.id);
-  for (const sheet of sheets.length ? sheets : [void 0]) {
-    const pl = await app.commands?.execute("panel.list", sheet ? { sheet } : {}).catch(() => null);
+  const spaces = (fieldOf(cl, "spaces") ?? []).map((c) => c.id);
+  for (const space of spaces.length ? spaces : [void 0]) {
+    const pl = await app.commands?.execute("panel.list", space ? { space } : {}).catch(() => null);
     const panels = (fieldOf(pl, "panels") ?? []).map((g) => g.id);
     for (const panel of panels) {
       const r = await app.commands?.execute("view.list", { panel }).catch(() => null);
