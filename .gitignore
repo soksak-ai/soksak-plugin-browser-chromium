@@ -5,5 +5,8 @@ node_modules/
 # 머신-로컬 dev 마커(추적 금지 — 배포 메타는 별도 파일)
 .soksak.json
 
+# 생성 파일 — 빌더가 SOKSAK_HOME 발견으로 재생성(머신 절대경로 포함, 커밋 금지)
+tsconfig.paths.json
+
 # local-only working notes (never committed)
 secret/
