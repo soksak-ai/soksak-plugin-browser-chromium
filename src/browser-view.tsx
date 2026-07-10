@@ -7,8 +7,8 @@
 //   - 아이콘: lucide-style inline SVG(코어 Icon 컴포넌트 비의존)
 
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { createBrowserToolbar, initialNavState } from "soksak-kit-browser-shell";
-import type { BrowserToolbar, NavState } from "soksak-kit-browser-shell";
+import { createBrowserToolbar, initialNavState } from "soksak-kit-browser-chassis";
+import type { BrowserToolbar, NavState } from "soksak-kit-browser-chassis";
 import { createPortal } from "react-dom";
 import type { PluginApi, PluginViewContext } from "./host";
 import { boundsCommitDecision, followShouldContinue } from "./bounds-follow";
@@ -642,7 +642,7 @@ function BrowserViewImpl({
 
   return (
     <div className="browser-view">
-      {/* 공용 툴바(soksak-kit-browser-shell) 호스트 — 세 브라우저 동일 DOM·노드·외형. 고유 버튼은 extraSlot 포털. */}
+      {/* 공용 툴바(soksak-kit-browser-chassis) 호스트 — 세 브라우저 동일 DOM·노드·외형. 고유 버튼은 extraSlot 포털. */}
       <div ref={tbHostRef} style={{ flex: "0 0 auto" }} />
       {tb &&
         createPortal(
