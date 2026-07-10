@@ -12,6 +12,7 @@ import type { BrowserToolbar, NavState } from "soksak-kit-browser-common";
 import { createPortal } from "react-dom";
 import type { PluginApi, PluginViewContext } from "./host";
 import { boundsCommitDecision, followShouldContinue } from "./bounds-follow";
+import { browserViewStatus, type BrowserPhase } from "./view-status";
 import { t } from "./i18n";
 import {
   makeChromium,
@@ -237,6 +238,13 @@ function BrowserViewImpl({
   const [bmOpen, setBmOpen] = useState(false);
   // 툴바 내비 상태 — 판정·DOM 은 kit 공용 툴바(createBrowserToolbar)가 단일 진실. 여기는 상태 공급만.
   const [nav, setNav] = useState<NavState>(initialNavState);
+  // 뷰 status 축 — 엔진 child 수명(open) 위상. 초기값은 엔진 가용성으로 판정한다:
+  // 콘텐츠 뷰가 요청됐는데(webview 어댑터 부재 = 사이드카 미연결) → 곧장 error.
+  const [openPhase, setOpenPhase] = useState<"connecting" | "open" | "error">(
+    () => (ctx.viewId && !webview ? "error" : "connecting"),
+  );
+  // 페이지 내비게이션 진행 여부(엔진 loading 이벤트 구동). ready 위상에서만 유의미.
+  const [pageLoading, setPageLoading] = useState(false);
   // 공용 툴바 마운트 — 콜백은 ref 경유(재생성 없이 최신 클로저 사용). 고유 버튼은 extraSlot 포털.
   const tbHostRef = useRef<HTMLDivElement | null>(null);
   const [tb, setTb] = useState<BrowserToolbar | null>(null);
@@ -357,11 +365,17 @@ function BrowserViewImpl({
           return;
         }
         openedRef.current = true;
+        setOpenPhase("open"); // 엔진 child 열림 → connecting 위상 종료(status 축)
         // 생성 경쟁 보정: open 완료 후 현재 visible 재적용
         void webview.visible(label, true).catch(() => {});
         syncBounds();
       })
-      .catch((e: unknown) => console.error("browser_open:", e));
+      .catch((e: unknown) => {
+        // 엔진 미연결(사이드카 로드/open 실패) — 뷰 status 축에 error 로 보고(사람 표면),
+        // 원본 오류는 콘솔로(raw 누출 금지).
+        setOpenPhase("error");
+        console.error("browser_open:", e);
+      });
 
     // 명령 레지스트리에 label 등록(navigator 명령 라우팅용).
     // getUrl 클로저는 컴포넌트 state 의 최신 localUrl 을 반환한다.
@@ -540,6 +554,7 @@ function BrowserViewImpl({
     });
     const d3 = webview.on(label, "loading", (p) => {
       setNav({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
+      setPageLoading(!!p.loading); // 뷰 status 축 — 페이지 로딩 상태 구동
     });
     // 파비콘 — title 동형의 콘텐츠 사실. 빈 url 도 보고(이전 페이지 stale 아이콘 해제).
     const d4 = webview.on(label, "favicon", (p) => {
@@ -554,6 +569,34 @@ function BrowserViewImpl({
       d4.dispose();
     };
   }, [label, webview, ctx]);
+
+  // 뷰 status 축 보고(코어 setStatus 계약) — 이 뷰의 진짜 상태 전이만 보고한다. 사이드바 배치
+  // (viewId 없음)는 뷰가 아니라 보고하지 않는다. 위상 우선순위: 엔진 미연결(error) > 엔진 여는
+  // 중(connecting) > 페이지 로딩(loading) > 유휴(ready → null, 억지 상태 금지). 사람 표면 문자열은
+  // 여기서 호스트 언어로 해소한다(순수 판정은 view-status.ts 가 코드만).
+  useEffect(() => {
+    if (!ctx.viewId) return;
+    const phase: BrowserPhase =
+      openPhase === "error"
+        ? { kind: "engine-error" }
+        : openPhase === "connecting"
+          ? { kind: "connecting" }
+          : pageLoading
+            ? { kind: "loading" }
+            : { kind: "ready" };
+    const report = browserViewStatus(phase);
+    ctx.setStatus(
+      report ? { code: report.code, message: t(report.messageKey, lang) } : null,
+    );
+  }, [ctx, openPhase, pageLoading, lang]);
+
+  // 뷰 언마운트(탭 닫힘/이동) 시 status 를 해제한다 — 위상 변화마다 청소하면 null 깜빡임이
+  // 생기므로 마운트 수명에 1회만 건다.
+  useEffect(() => {
+    if (!ctx.viewId) return;
+    return () => ctx.setStatus(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 새 링크를 browserNewWindow 설정대로 연다.
   //   "tab"(기본): 대기 URL 설정 후 새 브라우저 콘텐츠 뷰를 연다(mount 가 그 URL 소비).

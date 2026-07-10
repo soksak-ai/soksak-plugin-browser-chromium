@@ -12927,6 +12927,20 @@ function boundsCommitDecision(i) {
   return "send";
 }
 
+// src/view-status.ts
+function browserViewStatus(phase) {
+  switch (phase.kind) {
+    case "connecting":
+      return { code: "connecting", messageKey: "statusConnecting" };
+    case "engine-error":
+      return { code: "error", messageKey: "statusEngineOffline" };
+    case "loading":
+      return { code: "loading", messageKey: "statusLoading" };
+    case "ready":
+      return null;
+  }
+}
+
 // src/i18n.ts
 var EN = {
   back: "Back",
@@ -12944,7 +12958,10 @@ var EN = {
   dockBottom: "Dock DevTools to bottom",
   dockTop: "Dock DevTools to top",
   dockLeft: "Dock DevTools to left",
-  dockRight: "Dock DevTools to right"
+  dockRight: "Dock DevTools to right",
+  statusConnecting: "Starting engine\u2026",
+  statusLoading: "Loading\u2026",
+  statusEngineOffline: "Engine not connected"
 };
 var KO = {
   back: "\uC774\uC804",
@@ -12962,7 +12979,10 @@ var KO = {
   dockBottom: "DevTools \uC544\uB798 \uB3C4\uD0B9",
   dockTop: "DevTools \uC704 \uB3C4\uD0B9",
   dockLeft: "DevTools \uC67C\uCABD \uB3C4\uD0B9",
-  dockRight: "DevTools \uC624\uB978\uCABD \uB3C4\uD0B9"
+  dockRight: "DevTools \uC624\uB978\uCABD \uB3C4\uD0B9",
+  statusConnecting: "\uC5D4\uC9C4 \uC2DC\uC791 \uC911\u2026",
+  statusLoading: "\uBD88\uB7EC\uC624\uB294 \uC911\u2026",
+  statusEngineOffline: "\uC5D4\uC9C4\uC774 \uC5F0\uACB0\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4"
 };
 function t(key, lang) {
   const dict = lang === "ko" ? KO : EN;
@@ -14007,6 +14027,10 @@ function BrowserViewImpl({
   const localUrlRef = (0, import_react.useRef)(initialUrl);
   const [bmOpen, setBmOpen] = (0, import_react.useState)(false);
   const [nav, setNav] = (0, import_react.useState)(initialNavState);
+  const [openPhase, setOpenPhase] = (0, import_react.useState)(
+    () => ctx.viewId && !webview ? "error" : "connecting"
+  );
+  const [pageLoading, setPageLoading] = (0, import_react.useState)(false);
   const tbHostRef = (0, import_react.useRef)(null);
   const [tb, setTb] = (0, import_react.useState)(null);
   const tbCbRef = (0, import_react.useRef)({
@@ -14121,10 +14145,14 @@ function BrowserViewImpl({
         return;
       }
       openedRef.current = true;
+      setOpenPhase("open");
       void webview.visible(label, true).catch(() => {
       });
       syncBounds();
-    }).catch((e) => console.error("browser_open:", e));
+    }).catch((e) => {
+      setOpenPhase("error");
+      console.error("browser_open:", e);
+    });
     registerLabel(ctx.viewId, label, () => localUrlRef.current);
     return () => {
       closed = true;
@@ -14256,6 +14284,7 @@ function BrowserViewImpl({
     });
     const d3 = webview.on(label, "loading", (p) => {
       setNav({ loading: !!p.loading, canBack: !!p.canBack, canForward: !!p.canForward });
+      setPageLoading(!!p.loading);
     });
     const d4 = webview.on(label, "favicon", (p) => {
       if (typeof p.url !== "string") return;
@@ -14268,6 +14297,18 @@ function BrowserViewImpl({
       d4.dispose();
     };
   }, [label, webview, ctx]);
+  (0, import_react.useEffect)(() => {
+    if (!ctx.viewId) return;
+    const phase = openPhase === "error" ? { kind: "engine-error" } : openPhase === "connecting" ? { kind: "connecting" } : pageLoading ? { kind: "loading" } : { kind: "ready" };
+    const report = browserViewStatus(phase);
+    ctx.setStatus(
+      report ? { code: report.code, message: t(report.messageKey, lang) } : null
+    );
+  }, [ctx, openPhase, pageLoading, lang]);
+  (0, import_react.useEffect)(() => {
+    if (!ctx.viewId) return;
+    return () => ctx.setStatus(null);
+  }, []);
   const openExternal = (0, import_react.useCallback)(
     async (url) => {
       const mode = app.settings.get("browserNewWindow") ?? "tab";

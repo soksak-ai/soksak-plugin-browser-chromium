@@ -18,6 +18,9 @@ const EN: Dict = {
   dockTop: "Dock DevTools to top",
   dockLeft: "Dock DevTools to left",
   dockRight: "Dock DevTools to right",
+  statusConnecting: "Starting engine…",
+  statusLoading: "Loading…",
+  statusEngineOffline: "Engine not connected",
 };
 
 const KO: Dict = {
@@ -37,6 +40,9 @@ const KO: Dict = {
   dockTop: "DevTools 위 도킹",
   dockLeft: "DevTools 왼쪽 도킹",
   dockRight: "DevTools 오른쪽 도킹",
+  statusConnecting: "엔진 시작 중…",
+  statusLoading: "불러오는 중…",
+  statusEngineOffline: "엔진이 연결되지 않았습니다",
 };
 
 export function t(key: string, lang: string): string {
