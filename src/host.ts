@@ -13,9 +13,13 @@ export interface PluginViewContext {
   root: string | null;
   paneId: string | null;
   viewId: string | null;
+  // 복원 seam(B3) — 복원 마운트면 관찰됐던 런타임(setRestoreState 로 기록한 state 포함). 새 뷰는 null.
+  restore?: { cwd: string | null; state: unknown } | null;
   setBadge: (badge: number | "dot" | null) => void;
   setStatus: (status: { code: string; message?: string } | null) => void;
   setTitle: (title: string) => void;
+  // 플러그인 관찰 상태 보고(B3) — 뷰 레코드 영속(뷰와 수명 동기). kv 에 viewId 키 영속 금지.
+  setRestoreState?: (state: unknown) => void;
 }
 
 export interface PluginViewProvider {

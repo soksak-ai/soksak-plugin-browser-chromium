@@ -48,14 +48,18 @@ export default {
             // DevTools 탭이면 이 값이 inspected label(=검사 대상 브라우저의 label)이다 → URL 대신
             // 그 브라우저의 DevTools 를 임베드한다. 둘 다 1회 소비(다음 mount 오이어받기 방지).
             const devtools = takePendingDevtools();
-            // 시작 URL 우선순위: 대기 URL(open 명령 / open-external 새 탭이 set) → homeUrl 설정 → blank.
+            // 시작 URL 우선순위: 대기 URL(open 명령 / open-external 새 탭이 set) →
+            // 복원 상태(B3 restore.state — 뷰 레코드 영속) → homeUrl 설정 → blank.
+            // 플러그인 kv(vurl:viewId) 복원은 폐기 — viewId 재사용이 죽은 뷰의 잔재를 유입시킨다.
             const pending = takePendingUrl();
+            const rs = vctx.restore?.state as { url?: string } | null | undefined;
             const fallback =
               pending ??
+              (typeof rs?.url === "string" && rs.url ? rs.url : null) ??
               (app.settings.get("homeUrl") as string | undefined) ??
               "about:blank";
             const doMount = (url: string) => {
-              if (!container.isConnected) return; // kv 대기 중 unmount 가드
+              if (!container.isConnected) return;
               mountInto(
                 container,
                 <BrowserView
@@ -67,14 +71,6 @@ export default {
                 />,
               );
             };
-            // 복원 mount(대기 URL·DevTools 아님): 마지막 URL 로 되돌린다(R-OWN — native 와 동형).
-            if (!pending && !devtools && vctx.viewId && app.data) {
-              void app.data.kv
-                .get(`vurl:${vctx.viewId}`)
-                .then((v) => doMount(typeof v === "string" && v ? v : fallback))
-                .catch(() => doMount(fallback));
-              return;
-            }
             doMount(fallback);
           },
           unmount(container: HTMLElement) {
@@ -85,6 +81,14 @@ export default {
     }
 
     registerCommands(ctx);
+
+    // 레거시 vurl 원장 제거 — B3 restore.state 로 이관 완료(native 와 동형).
+    if (app.data) {
+      void app.data.kv
+        .keys("vurl:")
+        .then((ks) => { for (const k of ks) void app.data!.kv.delete(k); })
+        .catch(() => {});
+    }
   },
   deactivate() {
     // 이 인스턴스가 예약한 타이머(close 디바운스 파괴·sweep)를 소거 — 남겨두면 reload 뒤 stale

@@ -524,9 +524,8 @@ function BrowserViewImpl({
     const d1 = webview.on(label, "nav", (p) => {
       const url = p.url as string;
       setLocalUrl(url);
-      // 복원용 URL 영속(R-OWN) — 이 뷰의 마지막 URL. about:blank 는 저장하지 않는다.
-      if (ctx.viewId && app.data && url && url !== "about:blank")
-        void app.data.kv.set(`vurl:${ctx.viewId}`, url).catch(() => {});
+      // 복원용 URL 영속(B3 restore.state) — 뷰 레코드에 실려 뷰와 수명을 같이한다.
+      if (ctx.viewId && url && url !== "about:blank") ctx.setRestoreState?.({ url });
     });
     const d2 = webview.on(label, "title", (p) => {
       const title = p.title as string;
