@@ -132,7 +132,12 @@
           "content"
         ],
         "defaultPlacement": "content",
-        "transparent": true
+        "transparent": true,
+        "status": [
+          "connecting",
+          "error",
+          "loading"
+        ]
       }
     ],
     "programs": [
