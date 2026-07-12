@@ -191,25 +191,39 @@ export function registerCommands(ctx: PluginContext): void {
   };
 
   // ── eval/dom.* — 엔진 eval verb 소비(어댑터 eval 이 JSON 문자열 반환). 스니펫은 kit 단일 소스.
+  // 페이지는 엔진의 것이다. OS 웹뷰 capability 는 이 뷰의 라벨을 알지 못한다 — 그 라벨은 엔진
+  // child 의 것이고, 코어는 자기가 만든 webview 만 정확-라벨로 찾는다.
   const evalJson = async (label: string, body: string): Promise<unknown> => {
-    const raw = await app.webview!.eval(label, body);
+    const raw = await chromium.eval(label, body);
     try {
       return JSON.parse(raw);
     } catch {
       return raw;
     }
   };
-  const runDom = async (p: Record<string, unknown>, body: string): Promise<Record<string, unknown>> => {
+  // 스칼라를 돌려주는 스니펫의 답은 계약이 이름 붙인 키로 나간다 — 같은 질문에 다른 이름으로
+  // 답하면 소비자는 어느 구현체를 부르고 있는지 알아야 하고, 그 순간 계약은 없는 것이 된다.
+  const runDom = async (
+    p: Record<string, unknown>,
+    body: string,
+    key = "value",
+  ): Promise<Record<string, unknown>> => {
     const target = explicitTarget(p);
     const e = resolveEntry(target);
-    if (!e || !app.webview) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+    if (!e || !app.webview) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
     try {
       const v = await evalJson(e.label, body);
       const viewId = resolveViewId(target);
       if (v && typeof v === "object" && !Array.isArray(v)) return { ok: true, ...(v as object), viewId };
-      return { ok: true, value: v, viewId };
+      return { ok: true, [key]: v, viewId };
     } catch (err) {
-      return { ok: false, code: "INTERNAL", message: String(err instanceof Error ? err.message : err) };
+      // 페이지가 던진 것은 우리 내부 오류가 아니다. 원문은 data.detail 로, message 는 사람의 문장으로.
+      return {
+        ok: false,
+        code: "SCRIPT_ERROR",
+        message: "페이지가 스크립트를 거부했습니다.",
+        data: { detail: String(err instanceof Error ? err.message : err), viewId: resolveViewId(target) },
+      };
     }
   };
 
@@ -228,7 +242,7 @@ export function registerCommands(ctx: PluginContext): void {
       maxLength: { type: "number", description: "Max character length" },
     },
     handler: (p) =>
-      runDom(p, domTextBody(p.selector ? String(p.selector) : undefined, typeof p.maxLength === "number" ? p.maxLength : 20000)),
+      runDom(p, domTextBody(p.selector ? String(p.selector) : undefined, typeof p.maxLength === "number" ? p.maxLength : 20000), "text"),
   });
   reg("dom.html", {
     description: "Get the HTML of the page or a specific selector element.",
@@ -239,7 +253,7 @@ export function registerCommands(ctx: PluginContext): void {
       maxLength: { type: "number", description: "Max character length" },
     },
     handler: (p) =>
-      runDom(p, domHtmlBody(p.selector ? String(p.selector) : undefined, typeof p.maxLength === "number" ? p.maxLength : 20000)),
+      runDom(p, domHtmlBody(p.selector ? String(p.selector) : undefined, typeof p.maxLength === "number" ? p.maxLength : 20000), "html"),
   });
   reg("dom.query", {
     description:
@@ -264,9 +278,18 @@ export function registerCommands(ctx: PluginContext): void {
     params: {
       ...targetParam,
       selector: { type: "string", description: "CSS selector", required: true },
-      text: { type: "string", description: "Value to enter", required: true },
+      value: { type: "string", description: "Value to enter" },
+      // 폼 컨트롤에 넣는 것의 이름은 value 다. text 는 옛 이름이고, 그 이름으로 부르던 호출자를
+      // 깨지 않기 위해 받아만 준다. 하나는 반드시 와야 한다.
+      text: { type: "string", description: "Value to enter (alias of value)" },
     },
-    handler: (p) => runDom(p, domFillBody(String(p.selector), String(p.text ?? ""))),
+    handler: (p) => {
+      const given = typeof p.value === "string" ? p.value : typeof p.text === "string" ? p.text : null;
+      if (given === null) {
+        return Promise.resolve({ ok: false, code: "INVALID_PARAMS", message: "채울 값이 없습니다(value)." });
+      }
+      return runDom(p, domFillBody(String(p.selector), given));
+    },
   });
   reg("dom.submit", {
     description: "Submit a form (selector can be the form element or any element inside it).",
@@ -319,7 +342,7 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const viewId = resolveViewId(target);
       const url = normalizeUrl(String(p.url ?? ""));
       // 진행 델타(MESSAGE-PROTOCOL §2) — 엔진 로드는 수 초 걸린다: 무엇을 하는 중인지 흘린다.
@@ -348,7 +371,7 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       await chromium.history(e.label, -1);
       return { ok: true, viewId: resolveViewId(target) };
     },
@@ -362,7 +385,7 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       await chromium.history(e.label, 1);
       return { ok: true, viewId: resolveViewId(target) };
     },
@@ -376,7 +399,7 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       await chromium.navigate(e.label, e.getUrl());
       return { ok: true, viewId: resolveViewId(target) };
     },
@@ -390,7 +413,7 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       await chromium.stop?.(e.label);
       return { ok: true, viewId: resolveViewId(target) };
     },
@@ -404,7 +427,7 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const url = normalizeUrl(String(app.settings.get("homeUrl") ?? "about:blank"));
       await chromium.navigate(e.label, url);
       return { ok: true, viewId: resolveViewId(target), url };
@@ -431,13 +454,13 @@ export function registerCommands(ctx: PluginContext): void {
       const mode = app.settings?.get("devtoolsOpenMode") === "inline" ? "inline" : "tab";
       if (mode === "inline") {
         const viewId = resolveViewId(target);
-        if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+        if (!viewId) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
         return toggleInlineDevtools(viewId, scOf(p))
           ? { ok: true, mode: "inline", viewId }
           : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted", viewId };
       }
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const out = await openDevtoolsTab(app, e.label, scOf(p));
       return { ...out, viewId: resolveViewId(target) };
     },
@@ -451,7 +474,7 @@ export function registerCommands(ctx: PluginContext): void {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       // DevTools 도 일반 브라우저 뷰다 — 새 뷰가 마운트되며 inspected(e.label)의 DevTools 프론트엔드를
       // 연다. 이후 분할/이동/닫기는 코어 view 커맨드(드래그와 동일 경로)로 동일하게 제어된다.
       const out = await openDevtoolsTab(app, e.label, scOf(p));
@@ -474,7 +497,7 @@ export function registerCommands(ctx: PluginContext): void {
     },
     handler: async (p) => {
       const viewId = resolveViewId(explicitTarget(p));
-      if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!viewId) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const side =
         p.side === "top" || p.side === "bottom" || p.side === "left" || p.side === "right"
           ? p.side

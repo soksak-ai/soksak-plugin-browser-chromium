@@ -12,6 +12,9 @@
     "en": "Renders the browser as a content view — loads the bundled Chromium engine sidecar into the app process and drives a native child over the app.sidecar channel. Native Chromium speed, built-in URL bar and bookmarks. A uniform bundled Chromium engine, not the OS webview."
   },
   "entry": "main.js",
+  "implements": [
+    "soksak-browser-spec"
+  ],
   "permissions": [
     "ui",
     "commands",
@@ -249,7 +252,8 @@
       },
       {
         "name": "eval",
-        "title": "페이지 JS 실행"
+        "title": "페이지 JS 실행",
+        "danger": "inject"
       },
       {
         "name": "dom.text",
@@ -265,15 +269,18 @@
       },
       {
         "name": "dom.click",
-        "title": "요소 클릭"
+        "title": "요소 클릭",
+        "danger": "inject"
       },
       {
         "name": "dom.fill",
-        "title": "입력 채우기"
+        "title": "입력 채우기",
+        "danger": "inject"
       },
       {
         "name": "dom.submit",
-        "title": "폼 제출"
+        "title": "폼 제출",
+        "danger": "inject"
       },
       {
         "name": "dom.wait-for",

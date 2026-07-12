@@ -13607,24 +13607,29 @@ function registerCommands(ctx) {
     ctx.subscriptions.push(app.commands.register(name, spec));
   };
   const evalJson = async (label, body) => {
-    const raw = await app.webview.eval(label, body);
+    const raw = await chromium.eval(label, body);
     try {
       return JSON.parse(raw);
     } catch {
       return raw;
     }
   };
-  const runDom = async (p, body) => {
+  const runDom = async (p, body, key = "value") => {
     const target = explicitTarget(p);
     const e = resolveEntry(target);
-    if (!e || !app.webview) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+    if (!e || !app.webview) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
     try {
       const v = await evalJson(e.label, body);
       const viewId = resolveViewId(target);
       if (v && typeof v === "object" && !Array.isArray(v)) return { ok: true, ...v, viewId };
-      return { ok: true, value: v, viewId };
+      return { ok: true, [key]: v, viewId };
     } catch (err) {
-      return { ok: false, code: "INTERNAL", message: String(err instanceof Error ? err.message : err) };
+      return {
+        ok: false,
+        code: "SCRIPT_ERROR",
+        message: "\uD398\uC774\uC9C0\uAC00 \uC2A4\uD06C\uB9BD\uD2B8\uB97C \uAC70\uBD80\uD588\uC2B5\uB2C8\uB2E4.",
+        data: { detail: String(err instanceof Error ? err.message : err), viewId: resolveViewId(target) }
+      };
     }
   };
   reg("eval", {
@@ -13641,7 +13646,7 @@ function registerCommands(ctx) {
       selector: { type: "string", description: "CSS selector (omit = entire body)" },
       maxLength: { type: "number", description: "Max character length" }
     },
-    handler: (p) => runDom(p, domTextBody(p.selector ? String(p.selector) : void 0, typeof p.maxLength === "number" ? p.maxLength : 2e4))
+    handler: (p) => runDom(p, domTextBody(p.selector ? String(p.selector) : void 0, typeof p.maxLength === "number" ? p.maxLength : 2e4), "text")
   });
   reg("dom.html", {
     description: "Get the HTML of the page or a specific selector element.",
@@ -13651,7 +13656,7 @@ function registerCommands(ctx) {
       selector: { type: "string", description: "CSS selector (omit = entire document)" },
       maxLength: { type: "number", description: "Max character length" }
     },
-    handler: (p) => runDom(p, domHtmlBody(p.selector ? String(p.selector) : void 0, typeof p.maxLength === "number" ? p.maxLength : 2e4))
+    handler: (p) => runDom(p, domHtmlBody(p.selector ? String(p.selector) : void 0, typeof p.maxLength === "number" ? p.maxLength : 2e4), "html")
   });
   reg("dom.query", {
     description: "Summarize matching elements (tag / text / attributes) for a CSS selector \u2014 use to understand page structure.",
@@ -13675,9 +13680,18 @@ function registerCommands(ctx) {
     params: {
       ...targetParam,
       selector: { type: "string", description: "CSS selector", required: true },
-      text: { type: "string", description: "Value to enter", required: true }
+      value: { type: "string", description: "Value to enter" },
+      // 폼 컨트롤에 넣는 것의 이름은 value 다. text 는 옛 이름이고, 그 이름으로 부르던 호출자를
+      // 깨지 않기 위해 받아만 준다. 하나는 반드시 와야 한다.
+      text: { type: "string", description: "Value to enter (alias of value)" }
     },
-    handler: (p) => runDom(p, domFillBody(String(p.selector), String(p.text ?? "")))
+    handler: (p) => {
+      const given = typeof p.value === "string" ? p.value : typeof p.text === "string" ? p.text : null;
+      if (given === null) {
+        return Promise.resolve({ ok: false, code: "INVALID_PARAMS", message: "\uCC44\uC6B8 \uAC12\uC774 \uC5C6\uC2B5\uB2C8\uB2E4(value)." });
+      }
+      return runDom(p, domFillBody(String(p.selector), given));
+    }
   });
   reg("dom.submit", {
     description: "Submit a form (selector can be the form element or any element inside it).",
@@ -13726,7 +13740,7 @@ function registerCommands(ctx) {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const viewId = resolveViewId(target);
       const url = normalizeUrl2(String(p.url ?? ""));
       app.events.progress?.("navigate", url);
@@ -13750,7 +13764,7 @@ function registerCommands(ctx) {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       await chromium.history(e.label, -1);
       return { ok: true, viewId: resolveViewId(target) };
     }
@@ -13763,7 +13777,7 @@ function registerCommands(ctx) {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       await chromium.history(e.label, 1);
       return { ok: true, viewId: resolveViewId(target) };
     }
@@ -13776,7 +13790,7 @@ function registerCommands(ctx) {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       await chromium.navigate(e.label, e.getUrl());
       return { ok: true, viewId: resolveViewId(target) };
     }
@@ -13789,7 +13803,7 @@ function registerCommands(ctx) {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       await chromium.stop?.(e.label);
       return { ok: true, viewId: resolveViewId(target) };
     }
@@ -13802,7 +13816,7 @@ function registerCommands(ctx) {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const url = normalizeUrl2(String(app.settings.get("homeUrl") ?? "about:blank"));
       await chromium.navigate(e.label, url);
       return { ok: true, viewId: resolveViewId(target), url };
@@ -13826,11 +13840,11 @@ function registerCommands(ctx) {
       const mode = app.settings?.get("devtoolsOpenMode") === "inline" ? "inline" : "tab";
       if (mode === "inline") {
         const viewId = resolveViewId(target);
-        if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+        if (!viewId) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
         return toggleInlineDevtools(viewId, scOf(p)) ? { ok: true, mode: "inline", viewId } : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted", viewId };
       }
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const out = await openDevtoolsTab(app, e.label, scOf(p));
       return { ...out, viewId: resolveViewId(target) };
     }
@@ -13843,7 +13857,7 @@ function registerCommands(ctx) {
     handler: async (p) => {
       const target = explicitTarget(p);
       const e = resolveEntry(target);
-      if (!e) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!e) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const out = await openDevtoolsTab(app, e.label, scOf(p));
       return { ...out, viewId: resolveViewId(target) };
     }
@@ -13863,7 +13877,7 @@ function registerCommands(ctx) {
     },
     handler: async (p) => {
       const viewId = resolveViewId(explicitTarget(p));
-      if (!viewId) return { ok: false, code: "NO_TARGET", message: "no active browser view" };
+      if (!viewId) return { ok: false, code: "NO_VIEW", message: "no browser view to act on" };
       const side = p.side === "top" || p.side === "bottom" || p.side === "left" || p.side === "right" ? p.side : void 0;
       return toggleInlineDevtools(viewId, scOf(p), side) ? { ok: true, mode: "inline", viewId, ...side ? { side } : {} } : { ok: false, code: "NOT_MOUNTED", message: "browser view not mounted", viewId };
     }
