@@ -1,5 +1,5 @@
 // Chromium 엔진 어댑터 — browser-native 의 app.webview(OS 웹뷰 구동)와 동형 인터페이스를
-// 엔진 사이드카 채널(app.sidecar → soksak-sidecar-browser-chromium, 계약 soksak-sidecar-browser-spec)로
+// 엔진 사이드카 채널(app.sidecar → soksak-sidecar-browser-chromium, 계약 soksak-spec-sidecar-browser)로
 // 구현한다. browser-view 의 슬롯추적·URL바·북마크 로직을 그대로 재사용하면서 엔진만 번들 Chromium
 // 으로 바꾼다. 코어 비결합: 코어는 이 메시지들의 의미를 모른다(맹목 relay — docs/SIDECARS.md).
 import { fieldOf, type Disposable, type PluginApi, type SidecarHandle, type WebviewApi } from "./host";
@@ -467,7 +467,7 @@ export function makeChromium(app: PluginApi): WebviewApi {
       await send(app, { type: "load", id, url });
     },
 
-    // 로딩 정지 — 엔진 stop verb(soksak-sidecar-browser-spec). 툴바의 reload↔stop 토글이 쓴다.
+    // 로딩 정지 — 엔진 stop verb(soksak-spec-sidecar-browser). 툴바의 reload↔stop 토글이 쓴다.
     stop: async (label) => {
       const id = idByLabel.get(label);
       if (id == null || closeSent.has(id)) return;

@@ -5,7 +5,7 @@ operating system web view. It opens a browser — address bar, back/forward/relo
 bookmarks, developer tools — as a content tab and adds a **Browser (Chromium)**
 item to the new-tab (+) menu.
 
-The engine runs as the `browser-chromium` sidecar (`soksak-sidecar-browser-spec`),
+The engine runs as the `browser-chromium` sidecar (`soksak-spec-sidecar-browser`),
 an in-process module that owns a native child view composited into a DOM hole. This
 plugin drives that engine over the sidecar protocol and provides the surrounding
 browser interface and settings. Rendering is windowed (the engine paints its own

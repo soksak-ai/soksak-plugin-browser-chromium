@@ -13355,7 +13355,7 @@ function makeChromium(app) {
       if (id == null || closeSent.has(id)) return;
       await send(app, { type: "load", id, url });
     },
-    // 로딩 정지 — 엔진 stop verb(soksak-sidecar-browser-spec). 툴바의 reload↔stop 토글이 쓴다.
+    // 로딩 정지 — 엔진 stop verb(soksak-spec-sidecar-browser). 툴바의 reload↔stop 토글이 쓴다.
     stop: async (label) => {
       const id = idByLabel.get(label);
       if (id == null || closeSent.has(id)) return;
