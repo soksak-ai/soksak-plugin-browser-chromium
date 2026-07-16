@@ -5,7 +5,7 @@
     "ko": "브라우저 (Chromium)",
     "en": "Browser (Chromium)"
   },
-  "version": "0.1.0",
+  "version": "0.0.1",
   "repo": "https://github.com/soksak-ai/soksak-plugin-browser-chromium.git",
   "description": {
     "ko": "콘텐츠 뷰로 브라우저를 렌더 — 번들 Chromium 엔진 사이드카를 앱 프로세스에 로드해 네이티브 child 로 구동(app.sidecar 채널). 네이티브 Chromium 속도, URL 바·북마크 내장. OS 웹뷰가 아니라 어디서나 동일한 번들 Chromium 엔진.",
@@ -13,7 +13,10 @@
   },
   "entry": "main.js",
   "implements": [
-    "soksak-spec-plugin-browser"
+    {
+      "id": "soksak-spec-plugin-browser",
+      "version": "0.0.1"
+    }
   ],
   "permissions": [
     "ui",
@@ -27,7 +30,10 @@
   "sidecars": [
     {
       "name": "browser-chromium",
-      \"interface\": { \"id\": \"soksak-spec-sidecar-browser\", \"range\": \"0.0.1\" },
+      "interface": {
+        "id": "soksak-spec-sidecar-browser",
+        "range": "0.0.1"
+      },
       "reach": {
         "fetch": {
           "url": {
