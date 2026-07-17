@@ -10,3 +10,4 @@ tsconfig.paths.json
 
 # local-only working notes (never committed)
 secret/
+dist/

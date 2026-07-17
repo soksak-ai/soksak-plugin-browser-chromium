@@ -23,5 +23,11 @@
     "typescript": "~5.9.3",
     "vitest": "^2.1.8",
     "soksak-kit-browser-common": "github:soksak-ai/soksak-kit-browser-common"
+  },
+  "soksakRelease": {
+    "kind": "plugin",
+    "id": "soksak-plugin-browser-chromium",
+    "repository": "https://github.com/soksak-ai/soksak-plugin-browser-chromium",
+    "manifest": "release.json"
   }
 }
