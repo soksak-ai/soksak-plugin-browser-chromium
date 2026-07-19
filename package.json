@@ -1,7 +1,7 @@
 {
   "name": "soksak-plugin-browser-chromium",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "description": "soksak browser plugin on the bundled Chromium engine sidecar",
   "scripts": {

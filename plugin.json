@@ -2,13 +2,13 @@
   "spec": "soksak-spec-plugin@0.0.1",
   "id": "soksak-plugin-browser-chromium",
   "name": {
-    "ko": "\ube0c\ub77c\uc6b0\uc800 (Chromium)",
+    "ko": "브라우저 (Chromium)",
     "en": "Browser (Chromium)"
   },
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": {
-    "ko": "\ucf58\ud150\uce20 \ubdf0\ub85c \ube0c\ub77c\uc6b0\uc800\ub97c \ub80c\ub354 \u2014 \ubc88\ub4e4 Chromium \uc5d4\uc9c4 \uc0ac\uc774\ub4dc\uce74\ub97c \uc571 \ud504\ub85c\uc138\uc2a4\uc5d0 \ub85c\ub4dc\ud574 \ub124\uc774\ud2f0\ube0c child \ub85c \uad6c\ub3d9(app.sidecar \ucc44\ub110). \ub124\uc774\ud2f0\ube0c Chromium \uc18d\ub3c4, URL \ubc14\u00b7\ubd81\ub9c8\ud06c \ub0b4\uc7a5. OS \uc6f9\ubdf0\uac00 \uc544\ub2c8\ub77c \uc5b4\ub514\uc11c\ub098 \ub3d9\uc77c\ud55c \ubc88\ub4e4 Chromium \uc5d4\uc9c4.",
-    "en": "Renders the browser as a content view \u2014 loads the bundled Chromium engine sidecar into the app process and drives a native child over the app.sidecar channel. Native Chromium speed, built-in URL bar and bookmarks. A uniform bundled Chromium engine, not the OS webview."
+    "ko": "콘텐츠 뷰로 브라우저를 렌더 — 번들 Chromium 엔진 사이드카를 앱 프로세스에 로드해 네이티브 child 로 구동(app.sidecar 채널). 네이티브 Chromium 속도, URL 바·북마크 내장. OS 웹뷰가 아니라 어디서나 동일한 번들 Chromium 엔진.",
+    "en": "Renders the browser as a content view — loads the bundled Chromium engine sidecar into the app process and drives a native child over the app.sidecar channel. Native Chromium speed, built-in URL bar and bookmarks. A uniform bundled Chromium engine, not the OS webview."
   },
   "entry": "main.js",
   "implements": [
@@ -32,16 +32,6 @@
       "interface": {
         "id": "soksak-spec-sidecar-browser",
         "range": "0.0.1"
-      },
-      "reach": {
-        "fetch": {
-          "url": {
-            "darwin": "https://github.com/soksak-ai/soksak-sidecar-browser-chromium/releases/download/v0.0.1/soksak-sidecar-browser-chromium-0.0.1-darwin-arm64.tar.gz"
-          },
-          "sha256": {
-            "darwin": "88c14e79d11821f9efc9f8c139370c7a5cf3288771bda437b1f7bc596e7dc8fc"
-          }
-        }
       }
     }
   ],
@@ -51,11 +41,11 @@
       "type": "string",
       "default": "about:blank",
       "title": {
-        "ko": "\uc2dc\uc791 URL",
+        "ko": "시작 URL",
         "en": "Start URL"
       },
       "description": {
-        "ko": "\uc0c8 \ube0c\ub77c\uc6b0\uc800 \ud0ed\uc774 \ucc98\uc74c \uc5ec\ub294 \uc8fc\uc18c.",
+        "ko": "새 브라우저 탭이 처음 여는 주소.",
         "en": "Address a new browser tab opens to."
       }
     },
@@ -68,21 +58,21 @@
       ],
       "enumLabels": [
         {
-          "ko": "\uc0c8 \ud0ed",
+          "ko": "새 탭",
           "en": "New tab"
         },
         {
-          "ko": "\uc0c8 \ucc3d",
+          "ko": "새 창",
           "en": "New window"
         }
       ],
       "default": "tab",
       "title": {
-        "ko": "\uc0c8 \ub9c1\ud06c \uc5f4\uae30",
+        "ko": "새 링크 열기",
         "en": "Open new links in"
       },
       "description": {
-        "ko": "target=_blank / window.open \uc0c8 \ub9c1\ud06c\ub97c \uc0c8 \ud0ed(\uc571 \ub0b4 \ube0c\ub77c\uc6b0\uc800 \ubdf0)\uc73c\ub85c \uc5f0\ub2e4.",
+        "ko": "target=_blank / window.open 새 링크를 새 탭(앱 내 브라우저 뷰)으로 연다.",
         "en": "Open target=_blank / window.open links as a new tab (in-app browser view)."
       }
     },
@@ -91,11 +81,11 @@
       "type": "boolean",
       "default": false,
       "title": {
-        "ko": "DevTools \ud654\uba74 \ubbf8\ub9ac\ubcf4\uae30",
+        "ko": "DevTools 화면 미리보기",
         "en": "DevTools screencast"
       },
       "description": {
-        "ko": "DevTools \uc548\uc5d0 \uac80\uc0ac \uc911\uc778 \ud398\uc774\uc9c0\uc758 \ubbf8\ub9ac\ubcf4\uae30(screencast) \ud328\ub110\uc744 \ubcf4\uc5ec\uc900\ub2e4. \ud398\uc774\uc9c0\uac00 \uc606 \ud0ed\uc5d0 \uc774\ubbf8 \ubcf4\uc774\ubbc0\ub85c \uae30\ubcf8\uc740 \ub054.",
+        "ko": "DevTools 안에 검사 중인 페이지의 미리보기(screencast) 패널을 보여준다. 페이지가 옆 탭에 이미 보이므로 기본은 끔.",
         "en": "Show the inspected page's preview (screencast) panel inside DevTools. Off by default since the page is already visible in its own tab."
       }
     },
@@ -108,21 +98,21 @@
       ],
       "enumLabels": [
         {
-          "ko": "\ub3c5\ub9bd \ud0ed",
+          "ko": "독립 탭",
           "en": "Independent tab"
         },
         {
-          "ko": "\uac19\uc740 \ud0ed \ub0b4\ubd80 \ubd84\ud560",
+          "ko": "같은 탭 내부 분할",
           "en": "Split inside the tab"
         }
       ],
       "default": "tab",
       "title": {
-        "ko": "DevTools \uc5f4\uae30 \ubc29\uc2dd",
+        "ko": "DevTools 열기 방식",
         "en": "DevTools open mode"
       },
       "description": {
-        "ko": "\uac1c\ubc1c\uc790 \ub3c4\uad6c \ubc84\ud2bc/devtools \uba85\ub839\uc774 \uc5ec\ub294 \ubc29\uc2dd. \ub3c5\ub9bd \ud0ed = \ubd84\ud560/\uc774\ub3d9 \uac00\ub2a5\ud55c \uc815\uc2dd \ud0ed, \ub0b4\ubd80 \ubd84\ud560 = \ube0c\ub77c\uc6b0\uc800 \ubdf0 \uc548\uc5d0\uc11c \uc704(\ud398\uc774\uc9c0)/\uc544\ub798(DevTools)\ub85c \ub098\ub268. devtools-tab / devtools-inline \uba85\ub839\uc740 \uc124\uc815\uacfc \ubb34\uad00\ud558\uac8c \uac01 \ubc29\uc2dd\uc744 \uac15\uc81c\ud55c\ub2e4.",
+        "ko": "개발자 도구 버튼/devtools 명령이 여는 방식. 독립 탭 = 분할/이동 가능한 정식 탭, 내부 분할 = 브라우저 뷰 안에서 위(페이지)/아래(DevTools)로 나뉨. devtools-tab / devtools-inline 명령은 설정과 무관하게 각 방식을 강제한다.",
         "en": "How the devtools button / devtools command opens. Independent tab = a real splittable/movable tab; split inside = page on top, DevTools below within the browser view. The devtools-tab / devtools-inline commands force each mode regardless."
       }
     }
@@ -132,10 +122,10 @@
       {
         "id": "content",
         "title": {
-          "ko": "\ube0c\ub77c\uc6b0\uc800 (Chromium)",
+          "ko": "브라우저 (Chromium)",
           "en": "Browser (Chromium)"
         },
-        "icon": "\ud83c\udf10",
+        "icon": "🌐",
         "placements": [
           "content"
         ],
@@ -152,7 +142,7 @@
       {
         "id": "browser-chromium",
         "path": {
-          "ko": "\ube0c\ub77c\uc6b0\uc800",
+          "ko": "브라우저",
           "en": "Browser"
         },
         "title": {
@@ -167,185 +157,185 @@
       {
         "name": "ping",
         "title": {
-          "ko": "\ud50c\ub7ec\uadf8\uc778 \uc801\uc7ac/\ubc84\uc804 \ud655\uc778(E2E)",
+          "ko": "플러그인 적재/버전 확인(E2E)",
           "en": "Ping (load/version check)"
         }
       },
       {
         "name": "navigate",
         "title": {
-          "ko": "URL \uc774\ub3d9",
+          "ko": "URL 이동",
           "en": "Navigate to URL"
         }
       },
       {
         "name": "back",
         "title": {
-          "ko": "\uc774\uc804 \ud398\uc774\uc9c0",
+          "ko": "이전 페이지",
           "en": "Go Back"
         }
       },
       {
         "name": "forward",
         "title": {
-          "ko": "\ub2e4\uc74c \ud398\uc774\uc9c0",
+          "ko": "다음 페이지",
           "en": "Go Forward"
         }
       },
       {
         "name": "reload",
         "title": {
-          "ko": "\uc0c8\ub85c\uace0\uce68",
+          "ko": "새로고침",
           "en": "Reload"
         }
       },
       {
         "name": "open",
         "title": {
-          "ko": "\ube0c\ub77c\uc6b0\uc800 \ubdf0 \uc5f4\uae30",
+          "ko": "브라우저 뷰 열기",
           "en": "Open browser view"
         }
       },
       {
         "name": "devtools",
         "title": {
-          "ko": "\uac1c\ubc1c\uc790 \ub3c4\uad6c \ud0ed \uc5f4\uae30",
+          "ko": "개발자 도구 탭 열기",
           "en": "Open devtools tab"
         }
       },
       {
         "name": "stats",
         "title": {
-          "ko": "\uc5d4\uc9c4 child \uc9c4\ub2e8",
+          "ko": "엔진 child 진단",
           "en": "Engine child stats"
         }
       },
       {
         "name": "gc",
         "title": {
-          "ko": "\uc794\uc874 child \ud68c\uc218",
+          "ko": "잔존 child 회수",
           "en": "Reclaim leftover engine children"
         }
       },
       {
         "name": "devtools-tab",
         "title": {
-          "ko": "\uac1c\ubc1c\uc790 \ub3c4\uad6c \ub3c5\ub9bd \ud0ed\uc73c\ub85c \uc5f4\uae30",
+          "ko": "개발자 도구 독립 탭으로 열기",
           "en": "Open devtools as independent tab"
         }
       },
       {
         "name": "devtools-inline",
         "title": {
-          "ko": "\uac1c\ubc1c\uc790 \ub3c4\uad6c \ud0ed \ub0b4\ubd80 \ubd84\ud560 \ud1a0\uae00",
+          "ko": "개발자 도구 탭 내부 분할 토글",
           "en": "Toggle devtools inside the tab"
         }
       },
       {
         "name": "stop",
         "title": {
-          "ko": "\uc815\uc9c0",
+          "ko": "정지",
           "en": "Stop"
         }
       },
       {
         "name": "home",
         "title": {
-          "ko": "\ud648",
+          "ko": "홈",
           "en": "Home"
         }
       },
       {
         "name": "eval",
-        "title": "\ud398\uc774\uc9c0 JS \uc2e4\ud589",
+        "title": "페이지 JS 실행",
         "danger": "inject"
       },
       {
         "name": "dom.text",
-        "title": "\ud398\uc774\uc9c0 \ud14d\uc2a4\ud2b8"
+        "title": "페이지 텍스트"
       },
       {
         "name": "dom.html",
-        "title": "\ud398\uc774\uc9c0 HTML"
+        "title": "페이지 HTML"
       },
       {
         "name": "dom.query",
-        "title": "\uc694\uc18c \uc870\ud68c"
+        "title": "요소 조회"
       },
       {
         "name": "dom.click",
-        "title": "\uc694\uc18c \ud074\ub9ad",
+        "title": "요소 클릭",
         "danger": "inject"
       },
       {
         "name": "dom.fill",
-        "title": "\uc785\ub825 \ucc44\uc6b0\uae30",
+        "title": "입력 채우기",
         "danger": "inject"
       },
       {
         "name": "dom.submit",
-        "title": "\ud3fc \uc81c\ucd9c",
+        "title": "폼 제출",
         "danger": "inject"
       },
       {
         "name": "dom.wait-for",
-        "title": "\uc694\uc18c \ub300\uae30"
+        "title": "요소 대기"
       }
     ],
     "nodes": [
       {
         "id": "urlbar",
         "description": {
-          "ko": "URL \uc785\ub825\ucc3d",
+          "ko": "URL 입력창",
           "en": "URL input bar"
         }
       },
       {
         "id": "back",
         "description": {
-          "ko": "\uc774\uc804 \ubc84\ud2bc",
+          "ko": "이전 버튼",
           "en": "Back button"
         }
       },
       {
         "id": "forward",
         "description": {
-          "ko": "\ub2e4\uc74c \ubc84\ud2bc",
+          "ko": "다음 버튼",
           "en": "Forward button"
         }
       },
       {
         "id": "reload",
         "description": {
-          "ko": "\uc0c8\ub85c\uace0\uce68 \ubc84\ud2bc",
+          "ko": "새로고침 버튼",
           "en": "Reload button"
         }
       },
       {
         "id": "devtools",
         "description": {
-          "ko": "\uac1c\ubc1c\uc790 \ub3c4\uad6c \ubc84\ud2bc",
+          "ko": "개발자 도구 버튼",
           "en": "Developer tools button"
         }
       },
       {
         "id": "freeze",
         "description": {
-          "ko": "\ub514\ubc14\uc774\ub354 \ub4dc\ub798\uadf8 \uc911 \uc2dc\uac01 \uc5f0\uc18d \uc2a4\ud0e0\ub4dc\uc778(freeze-frame) \uc624\ubc84\ub808\uc774",
+          "ko": "디바이더 드래그 중 시각 연속 스탠드인(freeze-frame) 오버레이",
           "en": "Visual-continuity stand-in (freeze-frame) overlay during divider drag"
         }
       },
       {
         "id": "home",
         "description": {
-          "ko": "\ud648",
+          "ko": "홈",
           "en": "Home"
         }
       },
       {
         "id": "progress",
         "description": {
-          "ko": "\ub85c\ub529 \uc9c4\ud589 \ubc14",
+          "ko": "로딩 진행 바",
           "en": "Loading progress bar"
         }
       }
