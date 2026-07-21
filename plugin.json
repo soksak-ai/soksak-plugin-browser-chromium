@@ -17,6 +17,16 @@
       "version": "0.0.1"
     }
   ],
+  "consumes": [
+    {
+      "id": "soksak-spec-plugin-sidebar-bookmarks",
+      "range": "^0.0.1"
+    },
+    {
+      "id": "soksak-spec-plugin-sidebar-dom-picker",
+      "range": "^0.0.1"
+    }
+  ],
   "permissions": [
     "ui",
     "commands",
@@ -130,6 +140,24 @@
           "content"
         ],
         "defaultPlacement": "content",
+        "sidebar": {
+          "left": [
+            {
+              "contract": "soksak-spec-plugin-sidebar-bookmarks",
+              "range": "^0.0.1",
+              "view": "list",
+              "instance": "shared"
+            }
+          ],
+          "right": [
+            {
+              "contract": "soksak-spec-plugin-sidebar-dom-picker",
+              "range": "^0.0.1",
+              "view": "selections",
+              "instance": "shared"
+            }
+          ]
+        },
         "transparent": true,
         "status": [
           "connecting",
