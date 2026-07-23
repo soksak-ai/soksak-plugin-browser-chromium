@@ -353,6 +353,13 @@ export function makeChromium(app: PluginApi): WebviewApi {
   return {
     label: (viewId: string) => `chromium-${viewId}`,
 
+    zoom: async (label, factor) => {
+      // 페이지 줌(사이드카 §Zoom) — factor 는 호스트가 합성한 유효 배율(창×뷰).
+      const rid = idByLabel.get(label);
+      if (rid != null) await send(app, { type: "zoom", id: rid, factor });
+      return factor;
+    },
+
     open: async (label, o) => {
       // remount/split: 방금 close 예약된 label 이면 파괴 취소 + 기존 child 재사용(다시 표시, 페이지 보존).
       const pc = pendingClose.get(label);

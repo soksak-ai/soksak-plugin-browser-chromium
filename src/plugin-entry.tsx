@@ -2,7 +2,7 @@
 // 콘텐츠 뷰 "content" 를 등록 → BrowserView 를 마운트.
 import { createRoot, type Root } from "react-dom/client";
 import { BrowserView } from "./browser-view";
-import { cancelInstanceTimers, scheduleOrphanSweep } from "./chromium-adapter";
+import { cancelInstanceTimers, makeChromium, scheduleOrphanSweep } from "./chromium-adapter";
 import { injectStyles } from "./styles";
 import { registerCommands, takePendingUrl, takePendingDevtools } from "./commands";
 import type { PluginContext, PluginViewContext } from "./host";
@@ -41,6 +41,21 @@ export default {
     // 영구 잔존한다(실측 — 옛 크기 surface 가 화면을 덮음).
     scheduleOrphanSweep(app);
 
+    // 줌 합성 상태(§Zoom) — 창 배율(이벤트 캐시) × 뷰 배율(맵). 유효 배율은 엔진이 소비.
+    const api = makeChromium(app);
+    const pageZoom = new Map<string, number>();
+    let windowFactor = 1;
+    const applyView = (viewId: string) => {
+      const f = windowFactor * (pageZoom.get(viewId) ?? 1);
+      void api.zoom?.(api.label(viewId), f);
+    };
+    ctx.subscriptions.push(
+      app.events.on("window.zoom", (p) => {
+        windowFactor = Number((p as { factor?: number }).factor ?? 1) || 1;
+        for (const viewId of pageZoom.keys()) applyView(viewId);
+      }),
+    );
+
     if (app.ui?.registerView) {
       ctx.subscriptions.push(
         app.ui.registerView("content", {
@@ -75,6 +90,21 @@ export default {
           },
           unmount(container: HTMLElement) {
             unmountContainer(container);
+          },
+          zoom(_container: HTMLElement, vctx: PluginViewContext, action: "in" | "out" | "reset") {
+            // 페이지 줌(§Zoom — 브라우저 관례): 뷰 배율 스텝 후 창 배율과 합성해 엔진에 적용.
+            const viewId = vctx.viewId;
+            if (!viewId) return;
+            const cur = pageZoom.get(viewId) ?? 1;
+            const next =
+              action === "reset"
+                ? 1
+                : Math.max(
+                    0.25,
+                    Math.min(4, Math.round((cur + (action === "in" ? 0.1 : -0.1)) * 100) / 100),
+                  );
+            pageZoom.set(viewId, next);
+            applyView(viewId);
           },
         }),
       );

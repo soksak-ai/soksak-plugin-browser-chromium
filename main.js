@@ -13257,6 +13257,11 @@ function makeChromium(app) {
   scheduleOrphanSweep(app);
   return {
     label: (viewId) => `chromium-${viewId}`,
+    zoom: async (label, factor) => {
+      const rid = idByLabel.get(label);
+      if (rid != null) await send(app, { type: "zoom", id: rid, factor });
+      return factor;
+    },
     open: async (label, o) => {
       const pc = pendingClose.get(label);
       if (pc) {
@@ -14803,6 +14808,19 @@ var plugin_entry_default = {
     const app = ctx.app;
     injectStyles();
     scheduleOrphanSweep(app);
+    const api = makeChromium(app);
+    const pageZoom = /* @__PURE__ */ new Map();
+    let windowFactor = 1;
+    const applyView = (viewId) => {
+      const f = windowFactor * (pageZoom.get(viewId) ?? 1);
+      void api.zoom?.(api.label(viewId), f);
+    };
+    ctx.subscriptions.push(
+      app.events.on("window.zoom", (p) => {
+        windowFactor = Number(p.factor ?? 1) || 1;
+        for (const viewId of pageZoom.keys()) applyView(viewId);
+      })
+    );
     if (app.ui?.registerView) {
       ctx.subscriptions.push(
         app.ui.registerView("content", {
@@ -14831,6 +14849,17 @@ var plugin_entry_default = {
           },
           unmount(container) {
             unmountContainer(container);
+          },
+          zoom(_container, vctx, action) {
+            const viewId = vctx.viewId;
+            if (!viewId) return;
+            const cur = pageZoom.get(viewId) ?? 1;
+            const next = action === "reset" ? 1 : Math.max(
+              0.25,
+              Math.min(4, Math.round((cur + (action === "in" ? 0.1 : -0.1)) * 100) / 100)
+            );
+            pageZoom.set(viewId, next);
+            applyView(viewId);
           }
         })
       );

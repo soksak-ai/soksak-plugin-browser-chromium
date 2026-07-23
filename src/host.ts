@@ -27,6 +27,12 @@ export interface PluginViewContext {
 export interface PluginViewProvider {
   mount(container: HTMLElement, ctx: PluginViewContext): void;
   unmount?(container: HTMLElement): void;
+  /** 줌 인텐트(코어 PLUGIN-CONTRACT §Zoom, 선택) — 브라우저는 페이지 줌으로 응답. */
+  zoom?(
+    container: HTMLElement,
+    ctx: PluginViewContext,
+    action: "in" | "out" | "reset",
+  ): void;
 }
 
 export interface ParamSpec {
@@ -102,6 +108,8 @@ export interface WebviewApi {
   visible: (label: string, visible: boolean) => Promise<void>;
   /** URL 이동. */
   navigate: (label: string, url: string) => Promise<void>;
+  /** 뷰-단위 페이지 줌 — 호스트 합성 유효 배율(창×뷰)을 엔진에 전달. */
+  zoom?: (label: string, factor: number) => Promise<number>;
   /** URL 을 독립 OS 창(새 브라우저 윈도우)으로 연다. browserNewWindow="window" 모드용. */
   openWindow: (url: string) => Promise<void>;
   /** 세션 히스토리 이동(delta=-1 뒤/+1 앞). */
