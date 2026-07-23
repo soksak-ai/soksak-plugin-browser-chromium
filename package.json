@@ -20,9 +20,9 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "esbuild": "^0.24.2",
+    "soksak-kit-browser-common": "github:soksak-ai/soksak-kit-browser-common",
     "typescript": "~5.9.3",
-    "vitest": "^2.1.8",
-    "soksak-kit-browser-common": "github:soksak-ai/soksak-kit-browser-common"
+    "vitest": "^2.1.8"
   },
   "soksakRelease": {
     "kind": "plugin",
