@@ -11,17 +11,6 @@ export const GLOBAL_CSS = `
   color: var(--fg, #ddd);
   font: 12px var(--app-font, system-ui, sans-serif);
 }
-.bv-bar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--bg, #1e1e1e);
-  border-bottom: 1px solid var(--bd-soft, #2a2a2a);
-  -webkit-user-select: none;
-  user-select: none;
-}
 .bv-btn {
   flex: 0 0 auto;
   display: flex;
