@@ -105,7 +105,8 @@ export interface WebviewApi {
   /** 슬롯 rect 동기화(분할/리사이즈 — 프레임당 1회 권장). */
   bounds: (label: string, x: number, y: number, w: number, h: number) => Promise<void>;
   /** 표시/숨김(탭 전환·최대화의 숨김 슬롯). */
-  visible: (label: string, visible: boolean) => Promise<void>;
+  /** focus:false = 표현 전용 복귀(코어 슬롯 동결 해동 등) — responder 를 건드리지 않는다. */
+  visible: (label: string, visible: boolean, focus?: boolean) => Promise<void>;
   /** URL 이동. */
   navigate: (label: string, url: string) => Promise<void>;
   /** 뷰-단위 페이지 줌 — 호스트 합성 유효 배율(창×뷰)을 엔진에 전달. */
