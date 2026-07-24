@@ -14280,11 +14280,8 @@ function BrowserViewImpl({
     const offVeil = app.events.on("view.veiled", (p) => {
       const q = p;
       if (q.viewId !== ctx.viewId) return;
-      const visible = !q.veiled;
-      if (visible === lastVisibleRef.current) return;
-      lastVisibleRef.current = visible;
-      void webview.visible(label, visible, false);
-      if (visible) {
+      void webview.visible(label, !q.veiled, false);
+      if (!q.veiled) {
         lastRectRef.current = "";
         syncBounds(true);
       }

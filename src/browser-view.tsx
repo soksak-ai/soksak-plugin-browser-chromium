@@ -527,16 +527,15 @@ function BrowserViewImpl({
       }
     });
     // 코어 슬롯 동결(§4.6)의 표면 가림 릴레이 — 스탠드인이 선 동안만 표면을 숨긴다.
-    // park/IO 와 같은 가시성 장부(lastVisibleRef)를 쓰므로 서로 싸우지 않는다(멱등 토글).
-    // 복귀는 표현 전용(focus:false) — 사용자의 포커스 결정을 탈취하지 않는다.
+    // 가시성 장부(lastVisibleRef)에 절대 손대지 않는다: 장부는 park/IO 의 변화감지 축이고,
+    // 해동이 먼저 true 로 뒤집으면 뒤따르는 unpark/IO 에지가 조기 반환해 재스냅 문이 전부
+    // 닫힌다(실사고: 활성 표면이 파킹 좌표 -2220 에 좌초 — GeekNews 빈 홀). veil 은 표현
+    // 전용 직교 축 — 직접 숨기고 직접 복귀·재스냅한다(focus:false, 포커스 불탈취).
     const offVeil = app.events.on("view.veiled", (p) => {
       const q = p as { viewId?: string; veiled?: boolean };
       if (q.viewId !== ctx.viewId) return;
-      const visible = !q.veiled;
-      if (visible === lastVisibleRef.current) return;
-      lastVisibleRef.current = visible;
-      void webview.visible(label, visible, false);
-      if (visible) {
+      void webview.visible(label, !q.veiled, false);
+      if (!q.veiled) {
         lastRectRef.current = "";
         syncBounds(true);
       }
