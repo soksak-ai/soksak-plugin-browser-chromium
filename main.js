@@ -14277,9 +14277,22 @@ function BrowserViewImpl({
         syncBounds(true);
       }
     });
+    const offVeil = app.events.on("view.veiled", (p) => {
+      const q = p;
+      if (q.viewId !== ctx.viewId) return;
+      const visible = !q.veiled;
+      if (visible === lastVisibleRef.current) return;
+      lastVisibleRef.current = visible;
+      void webview.visible(label, visible, false);
+      if (visible) {
+        lastRectRef.current = "";
+        syncBounds(true);
+      }
+    });
     return () => {
       io.disconnect();
       offPark.dispose();
+      offVeil.dispose();
     };
   }, [webview, label, syncBounds, app, ctx.viewId]);
   (0, import_react.useEffect)(() => {
