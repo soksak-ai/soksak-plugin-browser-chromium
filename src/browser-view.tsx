@@ -526,9 +526,25 @@ function BrowserViewImpl({
         syncBounds(true);
       }
     });
+    // 코어 슬롯 동결(§4.6)의 표면 가림 릴레이 — 스탠드인이 선 동안만 표면을 숨긴다.
+    // park/IO 와 같은 가시성 장부(lastVisibleRef)를 쓰므로 서로 싸우지 않는다(멱등 토글).
+    // 복귀는 표현 전용(focus:false) — 사용자의 포커스 결정을 탈취하지 않는다.
+    const offVeil = app.events.on("view.veiled", (p) => {
+      const q = p as { viewId?: string; veiled?: boolean };
+      if (q.viewId !== ctx.viewId) return;
+      const visible = !q.veiled;
+      if (visible === lastVisibleRef.current) return;
+      lastVisibleRef.current = visible;
+      void webview.visible(label, visible, false);
+      if (visible) {
+        lastRectRef.current = "";
+        syncBounds(true);
+      }
+    });
     return () => {
       io.disconnect();
       offPark.dispose();
+      offVeil.dispose();
     };
   }, [webview, label, syncBounds, app, ctx.viewId]);
 
